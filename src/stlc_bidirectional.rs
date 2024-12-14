@@ -46,7 +46,7 @@ pub fn main() {
     //     t2: Rc::new(Tm::IntLit(3)),
     // };
 
-    let (ctm) = elab_check(&Context::default(), &tm, &core::Ty::BoolType);
+    let ctm = elab_check(&Context::default(), &tm, &core::Ty::BoolType);
 
     println!("{}", ctm);
 
