@@ -1,4 +1,4 @@
-// syntax
+// Bidirectional elaboration and evaluation for System F, based on brendan's language garden implementation
 
 use core::semantics::{eval_ty, quote_vty};
 use std::{collections::HashMap, rc::Rc};

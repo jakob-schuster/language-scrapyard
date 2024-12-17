@@ -1,4 +1,4 @@
-// Bidirectional elaboration for simply-typed lambda calculus, based on brendan's language garden!
+// Bidirectional elaboration and evaluation for simply-typed lambda calculus, based on brendan's language garden!
 
 use std::{collections::HashMap, rc::Rc};
 
