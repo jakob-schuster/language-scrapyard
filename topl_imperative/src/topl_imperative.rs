@@ -209,8 +209,8 @@ impl Comm {
 
 #[cfg(test)]
 mod test {
-    // Tests that a simple integer expression evaluates correctly
-    // "1 + 3" evaluates to "4"
+    /// Tests that a simple integer expression evaluates correctly
+    /// "1 + 3" evaluates to "4"
     #[test]
     fn test_int_add() {
         use super::*;
@@ -225,8 +225,8 @@ mod test {
         assert_eq!(e.eval(&env), Ok(4));
     }
 
-    // Tests that a simple integer expression evaluates correctly
-    // "10 * 10" evaluates to "100"
+    /// Tests that a simple integer expression evaluates correctly
+    /// "10 * 10" evaluates to "100"
     #[test]
     fn test_int_mul() {
         use super::*;
@@ -241,7 +241,7 @@ mod test {
         assert_eq!(e.eval(&env), Ok(100));
     }
 
-    // Tests that "not False" evaluates to "True"
+    /// Tests that "not False" evaluates to "True"
     #[test]
     fn test_bool_not() {
         use super::*;
@@ -255,8 +255,8 @@ mod test {
         assert_eq!(e.eval(&env), Ok(true));
     }
 
-    // Tests that evaluating a series of commands produces the expected final state
-    // "v := 10; if v > 9 then x := 0 else x := 1" evaluates to the state where "x == 0"
+    /// Tests that evaluating a series of commands produces the expected final state
+    /// "v := 10; if v > 9 then x := 0 else x := 1" evaluates to the state where "x == 0"
     #[test]
     fn test_comm_sequence() {
         use super::*;

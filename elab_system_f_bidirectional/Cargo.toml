@@ -1,0 +1,6 @@
+[package]
+name = "elab_system_f_bidirectional"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]

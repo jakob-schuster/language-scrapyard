@@ -1,8 +1,6 @@
 [package]
-name = "flowlang"
+name = "math"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-peg = "*"
-bumpalo = "*"

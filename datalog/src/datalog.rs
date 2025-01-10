@@ -195,7 +195,8 @@ fn eval_atom(kb: KnowledgeBase, atom: Atom, substs: Vec<Substitution>) -> Vec<Su
             .collect::<Option<Vec<_>>>()
             .unwrap();
 
-        subst.extend_with(&extension);
+        // subst.extend_with(&extension);
+        todo!()
     }
 
     // subst.extend_with(&extension);

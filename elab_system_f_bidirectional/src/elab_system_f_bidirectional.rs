@@ -603,7 +603,7 @@ pub mod core {
     pub mod semantics {
         use std::rc::Rc;
 
-        use crate::system_f_bidi::Env;
+        use crate::elab_system_f_bidirectional::Env;
 
         use super::{level_to_index, Level, Tm, Ty};
 
