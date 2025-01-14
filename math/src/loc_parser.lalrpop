@@ -1,0 +1,38 @@
+use std::str::FromStr;
+use crate::loc_math;
+use std::rc::Rc;
+
+grammar;
+
+Num: i32 = <s:r"[0-9]+"> => i32::from_str(s).unwrap();
+
+#[inline]
+BinOp: loc_math::BinOp = {
+    "+" => loc_math::BinOp::Add,
+    "-" => loc_math::BinOp::Sub,
+    "*" => loc_math::BinOp::Mul,
+    "/" => loc_math::BinOp::Div,
+    "%" => loc_math::BinOp::Mod
+};
+
+
+pub Exp: loc_math::Exp = Located<ExpData>;
+BinOpExp: loc_math::Exp = Located<BinOpExpData>;
+NumExp: loc_math::Exp = Located<NumExpData>;
+
+ExpData : loc_math::ExpData = {
+    BinOpExpData
+};
+
+BinOpExpData: loc_math::ExpData = {
+    <l:BinOpExp> <o:BinOp> <r:NumExp> => loc_math::ExpData::BinOp { op: o, e1: Rc::new(l), e2: Rc::new(r) },
+    NumExpData
+};
+NumExpData: loc_math::ExpData =
+    <n:Num> => loc_math::ExpData::Num(n as f32);
+
+
+#[inline]
+Located<T>: loc_math::Located<T> = {
+    <start: @L> <data: T> <end: @R> => loc_math::Located { start, end, data },
+};

@@ -1,0 +1,23 @@
+use std::str::FromStr;
+use crate::math;
+use std::rc::Rc;
+
+grammar;
+
+Num: i32 = <s:r"[0-9]+"> => i32::from_str(s).unwrap();
+
+BinOp: math::BinOp = {
+    "+" => math::BinOp::Add,
+    "-" => math::BinOp::Sub,
+    "*" => math::BinOp::Mul,
+    "/" => math::BinOp::Div,
+    "%" => math::BinOp::Mod
+};
+
+pub Exp : math::Exp = {
+    #[precedence(level="0")] // Highest precedence
+    <n:Num> => math::Exp::Num(n as f32),
+
+    #[precedence(level="1")] #[assoc(side="left")]
+    <l:Exp> <o:BinOp> <r:Exp> => math::Exp::BinOp { op: o, e1: Rc::new(l), e2: Rc::new(r) },
+};
