@@ -1,0 +1,14 @@
+[package]
+name = "codespan_stlc"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "*", features = ["derive"] }
+peg = { version = "*" }
+codespan-reporting = "*"
+anyhow = "*"
+lalrpop-util = { version = "0.21.0", features = ["lexer", "unicode"] }
+
+[build-dependencies]
+lalrpop = "0.22.0"

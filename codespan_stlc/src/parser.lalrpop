@@ -1,0 +1,90 @@
+use std::str::FromStr;
+use crate::surface;
+use std::rc::Rc;
+
+grammar;
+
+Name: String = <s:r"[a-zA-Z][a-zA-Z0-9\-]*"> => s.to_string();
+
+pub Ty: surface::Ty = Located<TyData>;
+#[inline] AtomicTy: surface::Ty = Located<AtomicTyData>;
+
+TyData: surface::TyData = {
+    <ty1:Ty> "->" <ty2:AtomicTy> => surface::TyData::FunType { ty1: Rc::new(ty1), ty2: Rc::new(ty2) },
+    AtomicTyData,
+}
+AtomicTyData: surface::TyData = {
+    "(" <ty:TyData> ")" => ty,
+    <n:Name> => surface::TyData::Name(n),
+}
+
+Op2: surface::Op2 = {
+    "=" => surface::Op2::Eq,
+    "+" => surface::Op2::Add,
+    "-" => surface::Op2::Sub,
+    "*" => surface::Op2::Mul,
+    "%" => surface::Op2::Mod,
+}
+Op1: surface::Op1 = {
+    "-" => surface::Op1::Neg,
+}
+
+pub Tm: surface::Tm = Located<TmData>;
+#[inline] Op2Tm: surface::Tm = Located<Op2TmData>;
+#[inline] AppTm: surface::Tm = Located<AppTmData>;
+#[inline] AtomicTm: surface::Tm = Located<AtomicTmData>;
+
+TmData: surface::TmData = {
+    Op2TmData,
+    "let" <binder:Binder> <params:Params> ":" <ty:(Ty)?> "=" <tm0:Tm> ";" <tm1:Tm> => surface::TmData::Let {
+        binder,
+        params,
+        ty,
+        tm0: Rc::new(tm0),
+        tm1: Rc::new(tm1),
+    },
+    "fun" <params:Params> "=>" <tm:Tm> => surface::TmData::FunLit { params, body: Rc::new(tm) },
+    "if" <guard:Tm> "then" <tm0:Tm> "else" <tm1:Tm> => surface::TmData::IfThenElse {
+        guard: Rc::new(guard),
+        tm0: Rc::new(tm0),
+        tm1: Rc::new(tm1),
+    },
+    <tm:Op2Tm> ":" <ty:Ty> => surface::TmData::Ann { tm: Rc::new(tm), ty: Rc::new(ty) },
+}
+Op2TmData: surface::TmData = {
+    AppTmData,
+    <tm1:AppTm> <op: Op2> <tm2:Op2Tm> => surface::TmData::Op2 { op, tm1: Rc::new(tm1), tm2: Rc::new(tm2) },
+}
+AppTmData: surface::TmData = {
+    AtomicTmData,
+    <fun:AtomicTm> <arg:AtomicTm> => surface::TmData::App {
+        fun: Rc::new(fun),
+        arg: Rc::new(arg),
+    },
+    <op: Op1> <tm:AtomicTm> => surface::TmData::Op1 { op, tm: Rc::new(tm) },
+}
+AtomicTmData: surface::TmData = {
+    "(" <tm:TmData> ")" => tm,
+
+    <b:Bool> => surface::TmData::BoolLit { b },
+    <i:Num> => surface::TmData::IntLit { i },
+    <name:Name> => surface::TmData::Name(name),
+}
+
+Binder: surface::Binder = Located<Name>;
+Params: Vec<surface::Param> = (<Param>)*;
+Param: surface::Param = {
+    <binder:Binder> => surface::Param::new(binder, None),
+    "(" <binder:Binder> ":" <ty:Ty> ")" => surface::Param::new(binder, Some(ty))
+};
+
+Num: i32 = <s:r"[0-9]+"> => i32::from_str(s).unwrap();
+Bool: bool = {
+    "true" => true,
+    "false" => false,
+}
+
+#[inline]
+Located<T>: surface::Located<T> = {
+    <start: @L> <data: T> <end: @R> => surface::Located::new(surface::Location::new(start, end), data),
+};
