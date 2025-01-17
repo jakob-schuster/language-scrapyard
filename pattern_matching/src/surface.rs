@@ -69,10 +69,19 @@ pub enum PatternData {
         s: String,
     },
 
+    StrConstructor {
+        regs: Vec<StrConsRegion>,
+    },
+
     /// Custom matchers?
     FuzzyStringMatch {
         s: String,
     },
+}
+
+pub enum StrConsRegion {
+    Str { s: String },
+    Named { n: String },
 }
 
 // A stack of bindings currently in scope
@@ -276,6 +285,22 @@ fn elab_infer_pattern(
         }
         PatternData::FuzzyStringMatch { s } => {
             Ok((Rc::new(core::matcher::Fuzzy {}), core::Ty::StrType, vec![]))
+        }
+        PatternData::StrConstructor { regs } => {
+            // get the named regions, in order
+            let mut named = vec![];
+            for reg in regs {
+                match reg {
+                    StrConsRegion::Str { s } => {}
+                    StrConsRegion::Named { n } => named.push((n.clone(), core::Ty::StrType)),
+                }
+            }
+
+            Ok((
+                Rc::new(core::matcher::StrConstructor::new(regs)),
+                core::Ty::StrType,
+                named,
+            ))
         }
     }
 }

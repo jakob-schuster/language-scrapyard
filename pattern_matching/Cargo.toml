@@ -5,3 +5,9 @@ edition = "2021"
 
 [dependencies]
 anyhow = "*"
+codespan-reporting = "*"
+codespan = "*"
+lalrpop-util = { version = "0.21.0", features = ["lexer", "unicode"] }
+
+[build-dependencies]
+lalrpop = "0.22.0"

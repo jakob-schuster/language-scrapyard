@@ -1,5 +1,7 @@
 use std::{fmt::Display, rc::Rc};
 
+pub mod matcher;
+
 #[derive(Clone, PartialEq, Eq)]
 pub enum Ty {
     BoolType,
@@ -60,65 +62,6 @@ pub enum Tm {
         tm: Rc<Tm>,
         branches: Vec<Branch>,
     },
-}
-
-pub mod matcher {
-    use super::{Env, Tm, Vtm};
-    use std::rc::Rc;
-
-    pub trait Matcher {
-        fn evaluate(&self, env: &Env, vtm: &Vtm) -> Option<Vec<Vtm>>;
-    }
-
-    pub struct Chain {
-        pub m1: Rc<dyn Matcher>,
-        pub m2: Rc<dyn Matcher>,
-    }
-    impl Matcher for Chain {
-        fn evaluate(&self, env: &Env, vtm: &Vtm) -> Option<Vec<Vtm>> {
-            let r1 = self.m1.evaluate(env, vtm)?;
-            let r2 = self.m2.evaluate(env, vtm)?;
-
-            Some(r1.into_iter().chain(r2).collect::<Vec<_>>())
-        }
-    }
-
-    pub struct Succeed {}
-    impl Matcher for Succeed {
-        fn evaluate(&self, env: &Env, vtm: &Vtm) -> Option<Vec<Vtm>> {
-            Some(vec![])
-        }
-    }
-
-    pub struct Bind {}
-    impl Matcher for Bind {
-        fn evaluate(&self, env: &Env, vtm: &Vtm) -> Option<Vec<Vtm>> {
-            Some(vec![vtm.clone()])
-        }
-    }
-
-    /// Note: this should carry a Vtm
-    pub struct Equal {
-        pub vtm: Vtm,
-    }
-    impl Matcher for Equal {
-        fn evaluate(&self, env: &Env, vtm: &Vtm) -> Option<Vec<Vtm>> {
-            // let vtm0 = super::eval(env, &self.tm);
-
-            if vtm.eq(&self.vtm) {
-                Some(vec![])
-            } else {
-                None
-            }
-        }
-    }
-
-    pub struct Fuzzy {}
-    impl Matcher for Fuzzy {
-        fn evaluate(&self, env: &Env, vtm: &Vtm) -> Option<Vec<Vtm>> {
-            todo!()
-        }
-    }
 }
 
 pub struct Branch {

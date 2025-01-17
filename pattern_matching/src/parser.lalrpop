@@ -1,0 +1,53 @@
+use std::str::FromStr;
+use crate::{surface, util};
+use std::rc::Rc;
+
+grammar;
+
+Name: String = <s:r"[a-zA-Z][a-zA-Z0-9\-]*"> => s.to_string();
+
+pub Tm: surface::Tm = Located<TmData>;
+#[inline] AtomicTm: surface::Tm = Located<AtomicTmData>;
+
+TmData: surface::TmData = {
+    AtomicTmData,
+
+    "let" <n:Name> "=" <head:Tm> ";" <body:Tm> => surface::TmData::Let {
+        n,
+        head: Rc::new(head),
+        body: Rc::new(body),
+    },
+
+    "if" <tm:Tm> "is" <branches:(<Branch> ";")+> => surface::TmData::Match {
+        tm: Rc::new(tm),
+        branches
+    }
+}
+AtomicTmData: surface::TmData = {
+    <n:Name> => surface::TmData::Name { n },
+    <b:Bool> => surface::TmData::BoolLit { b },
+    <i:Num> => surface::TmData::IntLit { i },
+}
+
+Branch: surface::Branch =
+    <pattern:Pattern> "=>" <tm:Tm> => surface::Branch { pattern, tm };
+Pattern: surface::Pattern = Located<PatternData>;
+PatternData: surface::PatternData = {
+    <name:Name> ":" <pattern:Pattern> => surface::PatternData::Named { name, pattern: Rc::new(pattern) },
+    "_" => surface::PatternData::Hole,
+
+    <b:Bool> => surface::PatternData::BoolLit { b },
+    <i:Num> => surface::PatternData::IntLit { i },
+}
+
+
+Num: i32 = <s:r"[0-9]+"> => i32::from_str(s).unwrap();
+Bool: bool = {
+    "true" => true,
+    "false" => false,
+}
+
+#[inline]
+Located<T>: util::Located<T> = {
+    <start: @L> <data: T> <end: @R> => util::Located::new(util::Location::new(start, end), data),
+};
