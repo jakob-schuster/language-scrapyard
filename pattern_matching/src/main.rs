@@ -23,18 +23,15 @@ fn main() -> anyhow::Result<()> {
     let config = codespan_reporting::term::Config::default();
 
     let code = "
-        let a = 10;
-        let b = 15;
+        let agent = {
+            professor = false,
+            doctor = false
+        };
 
-        if b is
-            'name is {r1} and {r2}' => name;
-            n:_ => n;
-
-        if rec is
-            { seq = 'AGCTAGCTGATGCTAGTGCTG', id = '', .. } =>
-            { age = 10 .. } =>
-
-            ";
+        if agent is
+              { doctor = false .. } => 0
+            | { professor = true, doctor = false } => 1
+    ";
 
     let tm = parser::TmParser::new()
         .parse(code)

@@ -2,13 +2,8 @@ use std::{collections::HashMap, rc::Rc};
 
 use crate::{
     core,
-    util::{Located, Location},
+    util::{self, Located, Location, RecField},
 };
-
-pub type Ty = Located<TyData>;
-pub enum TyData {
-    Name { n: String },
-}
 
 pub type Tm = Located<TmData>;
 pub enum TmData {
@@ -27,6 +22,15 @@ pub enum TmData {
     StrLit {
         s: String,
     },
+    RecLit {
+        fields: Vec<RecTmField>,
+    },
+
+    /// Record projection. Also known as field access
+    RecProj {
+        tm: Rc<Tm>,
+        name: String,
+    },
 
     /// A let binding, just binds one name to one value in the body
     Let {
@@ -41,6 +45,8 @@ pub enum TmData {
         branches: Vec<Branch>,
     },
 }
+
+pub type RecTmField = RecField<Tm>;
 
 pub struct Branch {
     pub pattern: Pattern,
@@ -68,16 +74,25 @@ pub enum PatternData {
     StrLit {
         s: String,
     },
+    RecLit {
+        fields: Vec<RecPatternField>,
+    },
 
-    StrConstructor {
-        regs: Vec<StrConsRegion>,
+    /// RecLit that can contain any number of other fields
+    RecLitWith {
+        fields: Vec<RecPatternField>,
     },
 
     /// Custom matchers?
+    StrConstructor {
+        regs: Vec<StrConsRegion>,
+    },
     FuzzyStringMatch {
         s: String,
     },
 }
+
+pub type RecPatternField = RecField<Pattern>;
 
 pub enum StrConsRegion {
     Str { s: String },
@@ -133,20 +148,6 @@ fn equate_ty(location: &Location, ty1: &core::Ty, ty2: &core::Ty) -> Result<(), 
     }
 }
 
-fn elab_ty(ty: &Ty) -> Result<core::Ty, ElabError> {
-    match &ty.data {
-        TyData::Name { n } => match &n[..] {
-            "Bool" => Ok(core::Ty::BoolType),
-            "Int" => Ok(core::Ty::IntType),
-            "Str" => Ok(core::Ty::StrType),
-            _ => Err(ElabError::new(
-                &ty.location,
-                &format!("unknown type: {}", n),
-            )),
-        },
-    }
-}
-
 pub fn elab_check(ctx: &Context, tm: &Tm, ty: &core::Ty) -> Result<core::Tm, ElabError> {
     match &tm.data {
         // fall back to type inference
@@ -165,9 +166,34 @@ pub fn elab_infer(ctx: &Context, tm: &Tm) -> Result<(core::Tm, core::Ty), ElabEr
             Some((index, ty)) => Ok((core::Tm::Var { index: *index }, ty.clone())),
             None => Err(ElabError::new(&tm.location, &format!("unbound name: {n}"))),
         },
-        TmData::BoolLit { b } => Ok((core::Tm::BoolLit { b: *b }, core::Ty::BoolType)),
-        TmData::IntLit { i } => Ok((core::Tm::IntLit { i: *i }, core::Ty::IntType)),
-        TmData::StrLit { s } => Ok((core::Tm::StrLit { s: s.clone() }, core::Ty::StrType)),
+        TmData::BoolLit { b } => Ok((core::Tm::BoolLit { b: *b }, core::Ty::Bool)),
+        TmData::IntLit { i } => Ok((core::Tm::IntLit { i: *i }, core::Ty::Int)),
+        TmData::StrLit { s } => Ok((core::Tm::StrLit { s: s.clone() }, core::Ty::Str)),
+        TmData::RecLit { fields } => {
+            let mut ty_fields = vec![];
+            let mut tm_fields = vec![];
+
+            // get the ty and tm of each field
+            for field in fields {
+                let (tm, ty) = elab_infer(ctx, &field.data)?;
+
+                ty_fields.push(core::RecTyField {
+                    name: field.name.clone(),
+                    data: ty,
+                });
+
+                tm_fields.push(core::RecTmField {
+                    name: field.name.clone(),
+                    data: tm,
+                });
+            }
+
+            Ok((
+                core::Tm::RecLit { fields: tm_fields },
+                core::Ty::Rec { fields: ty_fields },
+            ))
+        }
+
         TmData::Let { n, head, body } => {
             let (head_core, head_core_ty) = elab_infer(ctx, head)?;
             let (body_core, body_core_ty) = elab_infer(&ctx.with(n.clone(), head_core_ty), body)?;
@@ -207,6 +233,27 @@ pub fn elab_infer(ctx: &Context, tm: &Tm) -> Result<(core::Tm, core::Ty), ElabEr
                 },
                 final_ty,
             ))
+        }
+
+        TmData::RecProj { tm, name } => {
+            let (core_tm, core_ty) = elab_infer(ctx, tm)?;
+
+            match core_ty {
+                core::Ty::Rec { fields } => match core::proj_ty(&fields, name) {
+                    Some(ty) => Ok((
+                        core::Tm::RecProj {
+                            tm: Rc::new(core_tm),
+                            name: name.clone(),
+                        },
+                        ty,
+                    )),
+                    None => Err(ElabError::new(
+                        &tm.location,
+                        "field name not present in record!",
+                    )),
+                },
+                _ => Err(ElabError::new(&tm.location, "not a record!")),
+            }
         }
     }
 }
@@ -262,29 +309,21 @@ fn elab_infer_pattern(
             let vtm = core::Vtm::Bool { b: *b };
             Ok((
                 Rc::new(core::matcher::Equal { vtm }),
-                core::Ty::BoolType,
+                core::Ty::Bool,
                 vec![],
             ))
         }
         PatternData::IntLit { i } => {
             let vtm = core::Vtm::Int { i: *i };
-            Ok((
-                Rc::new(core::matcher::Equal { vtm }),
-                core::Ty::IntType,
-                vec![],
-            ))
+            Ok((Rc::new(core::matcher::Equal { vtm }), core::Ty::Int, vec![]))
         }
         PatternData::StrLit { s } => {
             let vtm = core::Vtm::Str { s: s.clone() };
 
-            Ok((
-                Rc::new(core::matcher::Equal { vtm }),
-                core::Ty::StrType,
-                vec![],
-            ))
+            Ok((Rc::new(core::matcher::Equal { vtm }), core::Ty::Str, vec![]))
         }
         PatternData::FuzzyStringMatch { s } => {
-            Ok((Rc::new(core::matcher::Fuzzy {}), core::Ty::StrType, vec![]))
+            Ok((Rc::new(core::matcher::Fuzzy {}), core::Ty::Str, vec![]))
         }
         PatternData::StrConstructor { regs } => {
             // get the named regions, in order
@@ -292,15 +331,88 @@ fn elab_infer_pattern(
             for reg in regs {
                 match reg {
                     StrConsRegion::Str { s } => {}
-                    StrConsRegion::Named { n } => named.push((n.clone(), core::Ty::StrType)),
+                    StrConsRegion::Named { n } => named.push((n.clone(), core::Ty::Str)),
                 }
             }
 
             Ok((
                 Rc::new(core::matcher::StrConstructor::new(regs)),
-                core::Ty::StrType,
+                core::Ty::Str,
                 named,
             ))
+        }
+        PatternData::RecLit { fields } => {
+            let (matcher, tys, names): (
+                Rc<dyn core::matcher::Matcher>,
+                Vec<RecField<core::Ty>>,
+                Vec<(String, core::Ty)>,
+            ) = fields.iter().try_fold(
+                (
+                    Rc::new(core::matcher::Succeed {}) as Rc<dyn core::matcher::Matcher>,
+                    vec![],
+                    vec![],
+                ),
+                |(acc, tys, names), field| {
+                    let (m1, ty1, names1) = elab_infer_pattern(ctx, &field.data)?;
+
+                    let mut tys1 = tys.clone();
+                    tys1.push(RecField::new(field.name.clone(), ty1));
+
+                    let names = names.iter().chain(&names1).cloned().collect::<Vec<_>>();
+
+                    Ok((
+                        Rc::new(core::matcher::Chain {
+                            m1: Rc::new(core::matcher::FieldAccess {
+                                name: field.name.clone(),
+                                inner: m1,
+                            }),
+                            m2: acc,
+                        }) as Rc<dyn core::matcher::Matcher>,
+                        tys1,
+                        names,
+                    ))
+                },
+            )?;
+
+            Ok((matcher, core::Ty::Rec { fields: tys }, names))
+        }
+
+        // The only difference here to RecLit is in the type elaboration;
+        // once type-checked, neither checks that the whole record is covered
+        PatternData::RecLitWith { fields } => {
+            let (matcher, tys, names): (
+                Rc<dyn core::matcher::Matcher>,
+                Vec<RecField<core::Ty>>,
+                Vec<(String, core::Ty)>,
+            ) = fields.iter().try_fold(
+                (
+                    Rc::new(core::matcher::Succeed {}) as Rc<dyn core::matcher::Matcher>,
+                    vec![],
+                    vec![],
+                ),
+                |(acc, tys, names), field| {
+                    let (m1, ty1, names1) = elab_infer_pattern(ctx, &field.data)?;
+
+                    let mut tys1 = tys.clone();
+                    tys1.push(RecField::new(field.name.clone(), ty1));
+
+                    let names = names.iter().chain(&names1).cloned().collect::<Vec<_>>();
+
+                    Ok((
+                        Rc::new(core::matcher::Chain {
+                            m1: Rc::new(core::matcher::FieldAccess {
+                                name: field.name.clone(),
+                                inner: m1,
+                            }),
+                            m2: acc,
+                        }) as Rc<dyn core::matcher::Matcher>,
+                        tys1,
+                        names,
+                    ))
+                },
+            )?;
+
+            Ok((matcher, core::Ty::RecWith { fields: tys }, names))
         }
     }
 }

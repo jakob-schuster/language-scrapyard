@@ -18,19 +18,35 @@ TmData: surface::TmData = {
         body: Rc::new(body),
     },
 
-    "if" <tm:Tm> "is" <branches:(<Branch> ";")+> => surface::TmData::Match {
+    "if" <tm:Tm> "is" <branches:NonEmptyList<<Branch>, "|">> => surface::TmData::Match {
         tm: Rc::new(tm),
         branches
-    }
+    },
+
+    "{" <fields:List<Field, ",">> "}" => surface::TmData::RecLit { fields },
+
+    <tm:AtomicTm> "." <name:Name> => surface::TmData::RecProj {
+        tm: Rc::new(tm),
+        name
+    },
 }
 AtomicTmData: surface::TmData = {
+    "(" <tm:TmData> ")" => tm,
     <n:Name> => surface::TmData::Name { n },
     <b:Bool> => surface::TmData::BoolLit { b },
     <i:Num> => surface::TmData::IntLit { i },
+    <s:r#"'([^'\\]|\\.)*'"#> => surface::TmData::StrLit { s: s.to_string() }
+}
+
+Field: surface::RecTmField = {
+    <name:Name> "=" <tm:Tm> => surface::RecTmField::new(name, tm)
+}
+PatternField: surface::RecPatternField = {
+    <name:Name> "=" <pattern:Pattern> => surface::RecPatternField::new(name, pattern)
 }
 
 Branch: surface::Branch =
-    <pattern:Pattern> "=>" <tm:Tm> => surface::Branch { pattern, tm };
+    <pattern:Pattern> "=>" <tm:AtomicTm> => surface::Branch { pattern, tm };
 Pattern: surface::Pattern = Located<PatternData>;
 PatternData: surface::PatternData = {
     <name:Name> ":" <pattern:Pattern> => surface::PatternData::Named { name, pattern: Rc::new(pattern) },
@@ -38,16 +54,35 @@ PatternData: surface::PatternData = {
 
     <b:Bool> => surface::PatternData::BoolLit { b },
     <i:Num> => surface::PatternData::IntLit { i },
+
+    "{" <fields:List<PatternField, ",">> "}" => surface::PatternData::RecLit { fields },
+    "{" <fields:List<PatternField, ",">> ".." "}" => surface::PatternData::RecLitWith { fields },
 }
 
 
-Num: i32 = <s:r"[0-9]+"> => i32::from_str(s).unwrap();
 Bool: bool = {
     "true" => true,
     "false" => false,
 }
+Num: i32 = <s:r"[0-9]+"> => i32::from_str(s).unwrap();
 
 #[inline]
 Located<T>: util::Located<T> = {
     <start: @L> <data: T> <end: @R> => util::Located::new(util::Location::new(start, end), data),
 };
+
+#[inline]
+List<Entry, Sep>: Vec<Entry> = {
+    <mut entries: (<Entry> Sep)*> <last: Entry?> => {
+        entries.extend(last);
+        entries
+    }
+}
+
+#[inline]
+NonEmptyList<Entry, Sep>: Vec<Entry> = {
+    <mut entries: (<Entry> Sep)*> <last: Entry> (<Sep>)? => {
+        entries.push(last);
+        entries
+    }
+}

@@ -18,6 +18,22 @@ impl Matcher for Chain {
     }
 }
 
+pub struct FieldAccess {
+    pub name: String,
+    pub inner: Rc<dyn Matcher>,
+}
+impl Matcher for FieldAccess {
+    fn evaluate(&self, env: &Env, vtm: &Vtm) -> Option<Vec<Vtm>> {
+        match vtm {
+            Vtm::Rec { fields } => match fields.iter().find(|field| field.name.eq(&self.name)) {
+                Some(field) => self.inner.evaluate(env, &field.data),
+                None => None,
+            },
+            _ => None,
+        }
+    }
+}
+
 pub struct Succeed {}
 impl Matcher for Succeed {
     fn evaluate(&self, env: &Env, vtm: &Vtm) -> Option<Vec<Vtm>> {
@@ -78,6 +94,7 @@ impl StrConstructor {
     }
 }
 impl Matcher for StrConstructor {
+    // This is soaking up my time and looks horrible, so I will do the smart thing and leave it for future work.
     fn evaluate(&self, env: &Env, vtm: &Vtm) -> Option<Vec<Vtm>> {
         enum PrevRegion {
             Str { end: usize },
