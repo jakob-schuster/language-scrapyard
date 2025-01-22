@@ -38,6 +38,21 @@ impl<A: Eq> Env<A> {
     }
 }
 
+impl<A: Clone> Env<A> {
+    pub fn with(&self, a: A) -> Env<A> {
+        let mut vec = self.vec.clone();
+        vec.push(a);
+
+        Env { vec }
+    }
+}
+
+impl<A> Default for Env<A> {
+    fn default() -> Self {
+        Env { vec: vec![] }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::Env;
@@ -65,20 +80,5 @@ mod test {
         };
 
         assert_eq!(env.find_last(&3), Some(3))
-    }
-}
-
-impl<A: Clone> Env<A> {
-    pub fn with(&self, a: A) -> Env<A> {
-        let mut vec = self.vec.clone();
-        vec.push(a);
-
-        Env { vec }
-    }
-}
-
-impl<A> Default for Env<A> {
-    fn default() -> Self {
-        Env { vec: vec![] }
     }
 }

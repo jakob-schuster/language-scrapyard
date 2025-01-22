@@ -178,7 +178,7 @@ fn check(ctx: &Context, tm: &Tm, expected_ty: &semantics::Vtm) -> core::Tm {
         }
 
         // For anything else, try inferring the type of the term, then checking
-        // to see i fth einferred type is the same as the expected type.
+        // to see if the inferred type is the same as the expected type.
         //
         // Instead of using conversion checking, extensions to this type system
         // could trigger unification or try to coerce the term to the expected

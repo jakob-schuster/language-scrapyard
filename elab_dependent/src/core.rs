@@ -115,7 +115,7 @@ pub mod semantics {
 
     /// Evaluation
     ///
-    /// Evaluate a term from teh syntax into its semantic interpretation
+    /// Evaluate a term from the syntax into its semantic interpretation
     pub fn eval(env: &Env<Vtm>, tm: &super::Tm) -> Vtm {
         match tm {
             super::Tm::Let { name, def, body } => eval(&env.with(eval(env, def)), body),
