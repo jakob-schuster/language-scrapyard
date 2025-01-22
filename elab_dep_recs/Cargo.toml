@@ -1,0 +1,14 @@
+[package]
+name = "elab_dep_recs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "*"
+codespan-reporting = "*"
+codespan = "*"
+itertools = "*"
+lalrpop-util = { version = "0.21.0", features = ["lexer", "unicode"] }
+
+[build-dependencies]
+lalrpop = "0.22.0"

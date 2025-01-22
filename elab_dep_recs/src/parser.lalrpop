@@ -1,0 +1,74 @@
+use std::str::FromStr;
+use crate::{surface, util};
+use std::rc::Rc;
+
+grammar;
+
+Name: String = <s:r"[a-zA-Z][a-zA-Z0-9\-]*"> => s.to_string();
+
+pub Tm: surface::Tm = Located<TmData>;
+#[inline] AtomicTm: surface::Tm = Located<AtomicTmData>;
+
+TmData: surface::TmData = {
+    AtomicTmData,
+
+    "let" <name:Name> "=" <head:Tm> ";" <body:Tm> => surface::TmData::Let {
+        name,
+        head: Rc::new(head),
+        body: Rc::new(body),
+    },
+
+    "(" <args:List<Tm, ",">> ")" "->" <body:Tm> => surface::TmData::FunTy {
+        args,
+        body: Rc::new(body)
+    },
+
+    "(" <args:List<Param, ",">> ")" ":" <ty:Tm> "=>" <body:Tm> => surface::TmData::FunLit {
+        args,
+        ty: Rc::new(ty),
+        body: Rc::new(body),
+    },
+
+    <head:AtomicTm> "(" <args:List<Tm, ",">> ")" => surface::TmData::FunApp {
+        head: Rc::new(head),
+        args
+    }
+}
+Param: surface::Param = {
+    <name:Name> ":" <ty:Tm> => surface::Param { name, ty }
+}
+
+AtomicTmData: surface::TmData = {
+    "{" <tm:TmData> "}" => tm,
+    <name:Name> => surface::TmData::Name { name },
+    <b:Bool> => surface::TmData::BoolLit { b },
+    <i:Num> => surface::TmData::IntLit { i },
+    <s:r#"'([^'\\]|\\.)*'"#> => surface::TmData::StrLit { s: s.to_string() }
+}
+
+Bool: bool = {
+    "true" => true,
+    "false" => false,
+}
+Num: i32 = <s:r"[0-9]+"> => i32::from_str(s).unwrap();
+
+#[inline]
+Located<T>: util::Located<T> = {
+    <start: @L> <data: T> <end: @R> => util::Located::new(util::Location::new(start, end), data),
+};
+
+#[inline]
+List<Entry, Sep>: Vec<Entry> = {
+    <mut entries: (<Entry> Sep)*> <last: Entry?> => {
+        entries.extend(last);
+        entries
+    }
+}
+
+#[inline]
+NonEmptyList<Entry, Sep>: Vec<Entry> = {
+    <mut entries: (<Entry> Sep)*> <last: Entry> (<Sep>)? => {
+        entries.push(last);
+        entries
+    }
+}
