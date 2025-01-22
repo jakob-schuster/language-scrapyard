@@ -201,7 +201,7 @@ pub fn infer(ctx: &Context, tm: &Tm) -> Result<(core::Tm, core::Vty), ElabError>
             core::Vty::Univ,
         )),
         TmData::FunLit { args, ty, body } => {
-            // then, make sure each arg has a type associated which is actually a type
+            // then, make sure each param has a type associated which is actually a type
             let param_tms = args
                 .iter()
                 .map(|arg| Ok((arg.name.clone(), check(ctx, &arg.ty, &core::Vty::Univ)?)))

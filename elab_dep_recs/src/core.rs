@@ -194,11 +194,7 @@ pub fn eval(env: &Env<Vtm>, tm: &Tm) -> Result<Vtm, EvalError> {
         }),
         TmData::FunLit { args, body } => Ok(Vtm::Fun {
             body: FunData {
-                env: args.iter().try_fold(env.clone(), |env0, arg| {
-                    let vtm = eval(env, arg)?;
-
-                    Ok(env0.with(vtm))
-                })?,
+                env: env.clone(),
                 body: body.as_ref().clone(),
             },
         }),

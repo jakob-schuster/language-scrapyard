@@ -21,16 +21,21 @@ pub struct ParseError {
     pub message: String,
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() {
     let mut writer = StandardStream::stderr(term::termcolor::ColorChoice::Always);
     let config = codespan_reporting::term::Config::default();
 
     let code = "
-        let f = (x : Int) : Type => Str;
-        let g = (x : Int) : f(x) => 'hello';
-
-        g(10)
+        let a = (t1 : Type, t2 : Type) : Type => (t1, t1) -> t2;
+        a(Str, Int)
     ";
+
+    println!("{}", fully_eval(code).unwrap());
+}
+
+fn fully_eval(code: &str) -> anyhow::Result<String> {
+    let mut writer = StandardStream::stderr(term::termcolor::ColorChoice::Always);
+    let config = codespan_reporting::term::Config::default();
 
     let tm = parser::TmParser::new()
         .parse(code)
@@ -85,6 +90,5 @@ fn main() -> anyhow::Result<()> {
         .unwrap();
     let vtm = core::eval(&surface::Context::standard_library().tms, &ctm).unwrap();
 
-    println!("{}", vtm);
-    Ok(())
+    Ok(vtm.to_string())
 }
