@@ -18,6 +18,3 @@ let g = (x : Int) : f(x) => 'hello';
 
 g(10)
 ```
-
-Bugs:
-- You can give the functions the wrong number of arguments and no one complains but it usually breaks
