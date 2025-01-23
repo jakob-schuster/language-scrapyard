@@ -1,8 +1,6 @@
 use std::fmt::Display;
 
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Location {
     pub start: usize,
     pub end: usize,
