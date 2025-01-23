@@ -1,11 +1,12 @@
 use crate::{
     core::{self, eval, EvalError},
-    util::{self, Env, Located},
+    util::{self, Env, Located, RecField},
 };
 use std::rc::Rc;
 
 pub type Tm = Located<TmData>;
 pub type Ty = Tm;
+#[derive(Clone)]
 pub enum TmData {
     Let {
         name: String,
@@ -39,8 +40,20 @@ pub enum TmData {
         head: Rc<Tm>,
         args: Vec<Tm>,
     },
+
+    RecTy {
+        fields: Vec<RecField<Tm>>,
+    },
+    RecLit {
+        fields: Vec<RecField<Tm>>,
+    },
+    RecProj {
+        tm: Rc<Tm>,
+        name: String,
+    },
 }
 
+#[derive(Clone)]
 pub struct Param {
     pub name: String,
     pub ty: Ty,
@@ -49,7 +62,7 @@ pub struct Param {
 /// An error that will be raised if there was a problem in the surface syntax,
 /// usually as a result of type errors. This is normal, and should be rendered
 /// nicely to the programmer.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ElabError {
     pub location: util::Location,
     pub message: String,
@@ -298,5 +311,87 @@ pub fn infer(ctx: &Context, tm: &Tm) -> Result<(core::Tm, core::Vty), ElabError>
                 )),
             },
         },
+
+        TmData::RecTy { fields } => {
+            // first, check that all the fields are types
+            Ok((
+                core::Tm::new(
+                    tm.location.clone(),
+                    core::TmData::RecTy {
+                        fields: fields
+                            .iter()
+                            .map(|field| {
+                                Ok(RecField::new(
+                                    field.name.clone(),
+                                    check(ctx, &field.data, &core::Vtm::Univ)?,
+                                ))
+                            })
+                            .collect::<Result<Vec<_>, _>>()?,
+                    },
+                ),
+                core::Vtm::Univ,
+            ))
+        }
+        TmData::RecLit { fields } => {
+            let new_fields = fields
+                .iter()
+                .map(|field| {
+                    let (ctm, vty) = infer(ctx, &field.data)?;
+
+                    Ok((
+                        RecField::new(field.name.clone(), ctm),
+                        RecField::new(field.name.clone(), vty),
+                    ))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+
+            Ok((
+                core::Tm::new(
+                    tm.location.clone(),
+                    core::TmData::RecLit {
+                        fields: new_fields.iter().map(|(f, _)| f.clone()).collect(),
+                    },
+                ),
+                core::Vtm::RecTy {
+                    fields: new_fields.iter().map(|(_, f)| f.clone()).collect(),
+                },
+            ))
+        }
+        TmData::RecProj { tm, name } => {
+            // first, get the value and type of the record
+            let (core_tm, core_ty) = infer(ctx, tm)?;
+
+            match core_ty {
+                // make sure it is a record
+                core::Vtm::RecTy { fields } => {
+                    match fields.iter().find(|field| field.name.eq(name)) {
+                        // then, make sure the field exists
+                        Some(RecField {
+                            name: _,
+                            data: field_ty,
+                        }) => Ok((
+                            core::Tm::new(
+                                tm.location.clone(),
+                                core::TmData::RecProj {
+                                    tm: Rc::new(core_tm),
+                                    name: name.clone(),
+                                },
+                            ),
+                            field_ty.clone(),
+                        )),
+                        // otherwise, an error
+                        None => Err(ElabError::new(
+                            &tm.location,
+                            "trying to access non-existent field",
+                        )),
+                    }
+                }
+                // otherwise, this is an error
+                _ => Err(ElabError::new(
+                    &tm.location,
+                    "trying to access field of a non-record",
+                )),
+            }
+        }
     }
 }

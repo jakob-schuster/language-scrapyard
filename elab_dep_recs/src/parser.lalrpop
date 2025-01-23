@@ -29,6 +29,10 @@ TmData: surface::TmData = {
         body: Rc::new(body),
     },
 
+    "{" <fields:NonEmptyList<RecTyField, ",">> "}" => surface::TmData::RecTy { fields },
+    "{" <fields:NonEmptyList<RecLitField, ",">> "}" => surface::TmData::RecLit { fields },
+    <tm:AtomicTm> "." <name:Name> => surface::TmData::RecProj { tm: Rc::new(tm), name },
+
     <head:AtomicTm> "(" <args:List<Tm, ",">> ")" => surface::TmData::FunApp {
         head: Rc::new(head),
         args
@@ -36,6 +40,12 @@ TmData: surface::TmData = {
 }
 Param: surface::Param = {
     <name:Name> ":" <ty:Tm> => surface::Param { name, ty }
+}
+RecTyField: util::RecField<surface::Tm> = {
+    <name:Name> ":" <ty:Tm> => util::RecField::new(name, ty)
+}
+RecLitField: util::RecField<surface::Tm> = {
+    <name:Name> "=" <ty:Tm> => util::RecField::new(name, ty)
 }
 
 AtomicTmData: surface::TmData = {

@@ -1,4 +1,6 @@
-use crate::util::{self, Env, Located};
+use itertools::Itertools;
+
+use crate::util::{self, Env, Located, RecField};
 
 use std::{fmt::Display, rc::Rc};
 
@@ -23,6 +25,10 @@ pub enum TmData {
     Let {
         head: Rc<Tm>,
         body: Rc<Tm>,
+    },
+    /// Variables
+    Var {
+        index: usize,
     },
 
     /// Universe of types
@@ -64,9 +70,18 @@ pub enum TmData {
         args: Vec<Tm>,
     },
 
-    /// Variables
-    Var {
-        index: usize,
+    /// A record type; identified by the set of names and types of its fields
+    RecTy {
+        fields: Vec<RecField<Ty>>,
+    },
+    /// A record literal; has a set of named fields with term values
+    RecLit {
+        fields: Vec<RecField<Tm>>,
+    },
+    /// Record projection, also called field access
+    RecProj {
+        tm: Rc<Tm>,
+        name: String,
     },
 }
 
@@ -74,6 +89,7 @@ impl Tm {
     fn is_bound(&self, index: Index) -> bool {
         match &self.data {
             TmData::Let { head, body } => head.is_bound(index) || body.is_bound(index),
+            TmData::Var { index: index1 } => index1.eq(&index),
 
             TmData::Univ
             | TmData::BoolTy
@@ -94,7 +110,9 @@ impl Tm {
                 head.is_bound(index) || args.iter().any(|arg| arg.is_bound(index))
             }
 
-            TmData::Var { index: index1 } => index1.eq(&index),
+            TmData::RecTy { fields } => fields.iter().any(|field| field.data.is_bound(index)),
+            TmData::RecLit { fields } => fields.iter().any(|field| field.data.is_bound(index)),
+            TmData::RecProj { tm, name } => tm.is_bound(index),
         }
     }
 }
@@ -118,11 +136,26 @@ pub enum Vtm {
 
     FunTy { args: Vec<Vtm>, body: Rc<Vtm> },
     Fun { body: FunData },
+
+    RecTy { fields: Vec<RecField<Vtm>> },
+    Rec { fields: Vec<RecField<Vtm>> },
 }
 pub type Vty = Vtm;
 
 impl Vtm {
     pub fn equiv(&self, other: &Vtm) -> bool {
+        // takes a field name, and looks it up in the list of fields,
+        // returning the type if one is found
+        let get = |fields: &[RecField<Vtm>], name: &str| -> Option<Vtm> {
+            let mut out = None;
+            for field in fields {
+                if field.name.eq(name) {
+                    out = Some(field.data.clone())
+                }
+            }
+            out
+        };
+
         match (self, other) {
             // trivially equivalent
             (Vtm::Univ, Vtm::Univ)
@@ -130,6 +163,8 @@ impl Vtm {
             | (Vtm::IntTy, Vtm::IntTy)
             | (Vtm::StrTy, Vtm::StrTy) => true,
 
+            // equivalent if argument types are the same
+            // and return types are the same
             (
                 Vtm::FunTy {
                     args: args1,
@@ -139,7 +174,28 @@ impl Vtm {
                     args: args2,
                     body: body2,
                 },
-            ) => args1.iter().zip(args2).all(|(arg1, arg2)| arg1.equiv(arg2)) && body1.equiv(body2),
+            ) => {
+                args1.len().eq(&args2.len())
+                    && args1.iter().zip(args2).all(|(arg1, arg2)| arg1.equiv(arg2))
+                    && body1.equiv(body2)
+            }
+
+            // equivalent if all fields are the same
+            (Vtm::RecTy { fields: fields1 }, Vtm::RecTy { fields: fields2 }) => {
+                let mut names = fields1
+                    .iter()
+                    .chain(fields2)
+                    .map(|a| a.name.clone())
+                    .unique();
+
+                fields1.len().eq(&fields2.len())
+                    && names.all(|name| match (get(&fields1, &name), get(&fields2, &name)) {
+                        // both recs must contain all fields, and the types must be equivalent
+                        (Some(vty1), Some(vty2)) => vty1.equiv(&vty2),
+                        // any fields missing is a type error
+                        _ => false,
+                    })
+            }
 
             _ => false,
         }
@@ -206,6 +262,42 @@ pub fn eval(env: &Env<Vtm>, tm: &Tm) -> Result<Vtm, EvalError> {
         ),
 
         TmData::Var { index } => Ok(env.get(*index).clone()),
+
+        TmData::RecTy { fields } => Ok(Vtm::RecTy {
+            fields: fields
+                .iter()
+                .map(|field| Ok(RecField::new(field.name.clone(), eval(env, &field.data)?)))
+                .collect::<Result<Vec<_>, _>>()?,
+        }),
+        TmData::RecLit { fields } => Ok(Vtm::Rec {
+            fields: fields
+                .iter()
+                .map(|field| Ok(RecField::new(field.name.clone(), eval(env, &field.data)?)))
+                .collect::<Result<Vec<_>, _>>()?,
+        }),
+        TmData::RecProj { tm, name } => {
+            let vtm = eval(env, tm)?;
+
+            match vtm {
+                Vtm::Ntm { ntm } => Ok(Vtm::Ntm {
+                    ntm: Ntm::RecProj {
+                        tm: Rc::new(ntm),
+                        name: name.clone(),
+                    },
+                }),
+                Vtm::Rec { fields } => {
+                    for field in fields {
+                        if field.name.eq(name) {
+                            return Ok(field.data);
+                        }
+                    }
+
+                    panic!("trying to access a non-existent field?!")
+                }
+
+                _ => panic!("trying to project on non-record type?!"),
+            }
+        }
     }
 }
 
@@ -228,19 +320,26 @@ pub enum Ntm {
     Var { level: usize },
 
     FunApp { head: Rc<Ntm>, args: Vec<Vtm> },
+
+    RecProj { tm: Rc<Ntm>, name: String },
 }
 
 impl Display for Vtm {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Vtm::Ntm { ntm } => ntm.fmt(f),
+
             Vtm::Univ => "Type".fmt(f),
+
             Vtm::BoolTy => "Bool".fmt(f),
             Vtm::Bool { b } => b.fmt(f),
+
             Vtm::IntTy => "Int".fmt(f),
             Vtm::Int { i } => i.fmt(f),
+
             Vtm::StrTy => "Str".fmt(f),
             Vtm::Str { s } => s.fmt(f),
+
             Vtm::FunTy { args, body } => format!(
                 "({}) -> {}",
                 args.iter()
@@ -251,6 +350,25 @@ impl Display for Vtm {
             )
             .fmt(f),
             Vtm::Fun { body } => "#func".fmt(f),
+
+            Vtm::RecTy { fields } => format!(
+                "{{ {} }}",
+                fields
+                    .iter()
+                    .map(|a| a.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+            .fmt(f),
+            Vtm::Rec { fields } => format!(
+                "{{ {} }}",
+                fields
+                    .iter()
+                    .map(|a| a.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+            .fmt(f),
         }
     }
 }
@@ -268,6 +386,7 @@ impl Display for Ntm {
                     .join(", ")
             )
             .fmt(f),
+            Ntm::RecProj { tm, name } => format!("{}.{}", tm, name).fmt(f),
         }
     }
 }
