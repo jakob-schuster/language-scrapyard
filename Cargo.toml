@@ -1,0 +1,15 @@
+[workspace]
+
+members = [
+  "math",
+  "topl_imperative",
+  "lc",
+  "ucs",
+  "datalog",
+  "elab_stlc_bidirectional",
+  "elab_system_f_bidirectional",
+  "elab_dependent",
+  "elab_stlc_codespan",
+  "pattern_matching",
+  "elab_dep_recs"
+]
