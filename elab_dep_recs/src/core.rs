@@ -4,6 +4,8 @@ use crate::util::{self, Env, Located, RecField};
 
 use std::{fmt::Display, rc::Rc};
 
+pub mod matcher;
+
 // De Bruijn index, represents a variable occurrence by the number of
 // binders between the occurrence and the binder it refers to.
 pub type Index = usize;
@@ -83,6 +85,20 @@ pub enum TmData {
         tm: Rc<Tm>,
         name: String,
     },
+
+    Match {
+        tm: Rc<Tm>,
+        branches: Vec<Branch>,
+    },
+}
+
+#[derive(Clone)]
+pub struct Branch {
+    /// A function from an environment to a list of new bindings, or a failure to match
+    pub matcher: Rc<dyn matcher::Matcher>,
+
+    /// A body to evaluate if the match function succeeds
+    pub body: Tm,
 }
 
 impl Tm {
@@ -113,6 +129,11 @@ impl Tm {
             TmData::RecTy { fields } => fields.iter().any(|field| field.data.is_bound(index)),
             TmData::RecLit { fields } => fields.iter().any(|field| field.data.is_bound(index)),
             TmData::RecProj { tm, name } => tm.is_bound(index),
+
+            // todo: finish is_bound for match. haven't done this because it
+            // looks like this whole function was only used for resugaring
+            // in brendan's implementation
+            TmData::Match { tm, branches } => todo!(),
         }
     }
 }
@@ -124,6 +145,9 @@ pub enum Vtm {
     Ntm { ntm: Ntm },
 
     Univ,
+
+    // Equivalent to all other types
+    AnyTy,
 
     BoolTy,
     Bool { b: bool },
@@ -142,6 +166,69 @@ pub enum Vtm {
 }
 pub type Vty = Vtm;
 
+impl PartialEq for Vtm {
+    fn eq(&self, other: &Self) -> bool {
+        // takes a field name, and looks it up in the list of fields,
+        // returning the type if one is found
+        let get = |fields: &[RecField<Vtm>], name: &str| -> Option<Vtm> {
+            let mut out = None;
+            for field in fields {
+                if field.name.eq(name) {
+                    out = Some(field.data.clone())
+                }
+            }
+            out
+        };
+
+        match (self, other) {
+            (Vtm::AnyTy, _) | (_, Vtm::AnyTy) => true,
+
+            // trivially equal
+            (Vtm::Univ, Vtm::Univ)
+            | (Vtm::BoolTy, Vtm::BoolTy)
+            | (Vtm::IntTy, Vtm::IntTy)
+            | (Vtm::StrTy, Vtm::StrTy) => true,
+            (Vtm::Bool { b: b1 }, Vtm::Bool { b: b2 }) => b1.eq(b2),
+            (Vtm::Int { i: i1 }, Vtm::Int { i: i2 }) => i1.eq(i2),
+            (Vtm::Str { s: s1 }, Vtm::Str { s: s2 }) => s1.eq(s2),
+
+            // record types and records are equivalent if all fields are the same
+            (Vtm::RecTy { fields: fields1 }, Vtm::RecTy { fields: fields2 }) => {
+                let mut names = fields1
+                    .iter()
+                    .chain(fields2)
+                    .map(|a| a.name.clone())
+                    .unique();
+
+                fields1.len().eq(&fields2.len())
+                    && names.all(|name| match (get(&fields1, &name), get(&fields2, &name)) {
+                        // both recs must contain all fields, and the types must be equivalent
+                        (Some(vty1), Some(vty2)) => vty1.equiv(&vty2),
+                        // any fields missing is a type error
+                        _ => false,
+                    })
+            }
+            (Vtm::Rec { fields: fields1 }, Vtm::Rec { fields: fields2 }) => {
+                let mut names = fields1
+                    .iter()
+                    .chain(fields2)
+                    .map(|a| a.name.clone())
+                    .unique();
+
+                fields1.len().eq(&fields2.len())
+                    && names.all(|name| match (get(&fields1, &name), get(&fields2, &name)) {
+                        // both recs must contain all fields, and the types must be equivalent
+                        (Some(vty1), Some(vty2)) => vty1.equiv(&vty2),
+                        // any fields missing is a type error
+                        _ => false,
+                    })
+            }
+
+            _ => false,
+        }
+    }
+}
+
 impl Vtm {
     pub fn equiv(&self, other: &Vtm) -> bool {
         // takes a field name, and looks it up in the list of fields,
@@ -157,6 +244,9 @@ impl Vtm {
         };
 
         match (self, other) {
+            // Any is equivalent to everything
+            (Vtm::AnyTy, _) | (_, Vtm::AnyTy) => true,
+
             // trivially equivalent
             (Vtm::Univ, Vtm::Univ)
             | (Vtm::BoolTy, Vtm::BoolTy)
@@ -198,6 +288,50 @@ impl Vtm {
             }
 
             _ => false,
+        }
+    }
+
+    pub fn most_precise(&self, other: &Vtm) -> Vtm {
+        // takes a field name, and looks it up in the list of fields,
+        // returning the type if one is found
+        let get = |fields: &[RecField<Vtm>], name: &str| -> Option<Vtm> {
+            let mut out = None;
+            for field in fields {
+                if field.name.eq(name) {
+                    out = Some(field.data.clone())
+                }
+            }
+            out
+        };
+
+        match (self, other) {
+            // if either type is Any, the other type is assumed more precise
+            (Vtm::AnyTy, ty) | (ty, Vtm::AnyTy) => ty.clone(),
+
+            // if both are Rec, take the most precise version of each field
+            (Vtm::RecTy { fields: fields1 }, Vtm::RecTy { fields: fields2 }) => {
+                Vtm::RecTy {
+                    fields: fields1
+                        .iter()
+                        .chain(fields2)
+                        .map(|RecField { name, .. }| name)
+                        .unique()
+                        .map(|name| match (get(fields1, name), get(fields2, name)) {
+                            // when both Recs contain the field name, take the most precise definition
+                            (Some(ty1), Some(ty2)) => {
+                                RecField::new(name.clone(), ty1.most_precise(&ty2))
+                            }
+                            // this should never happen
+                            _ => panic!(
+                                "a record was missing a field?! both should have all fields?!"
+                            ),
+                        })
+                        .collect::<Vec<_>>(),
+                }
+            }
+
+            // all atomic combinations are equally precise (assuming they are equiv!)
+            _ => self.clone(),
         }
     }
 }
@@ -298,6 +432,24 @@ pub fn eval(env: &Env<Vtm>, tm: &Tm) -> Result<Vtm, EvalError> {
                 _ => panic!("trying to project on non-record type?!"),
             }
         }
+        TmData::Match { tm, branches } => {
+            let vtm = eval(env, tm)?;
+
+            // go through each branch
+            for branch in branches {
+                if let Some(vtms) = branch.matcher.evaluate(env, &vtm) {
+                    // bind all the values in the env
+                    let new_env = vtms
+                        .iter()
+                        .fold(env.clone(), |env0, vtm| env0.with(vtm.clone()));
+
+                    // evaluate the arm, just for the first one that matches
+                    return eval(&new_env, &branch.body);
+                }
+            }
+
+            panic!("incomplete match?!")
+        }
     }
 }
 
@@ -369,6 +521,8 @@ impl Display for Vtm {
                     .join(", ")
             )
             .fmt(f),
+
+            Vtm::AnyTy => "Any".fmt(f),
         }
     }
 }

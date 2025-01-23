@@ -51,6 +51,44 @@ pub enum TmData {
         tm: Rc<Tm>,
         name: String,
     },
+    /// A match expression. Evaluates to the first branch whose pattern matches
+    Match {
+        tm: Rc<Tm>,
+        branches: Vec<Branch>,
+    },
+}
+
+#[derive(Clone)]
+pub struct Branch {
+    pub pattern: Pattern,
+    pub tm: Tm,
+}
+
+pub type Pattern = Located<PatternData>;
+#[derive(Clone)]
+pub enum PatternData {
+    /// Named
+    Named {
+        name: String,
+        pattern: Rc<Pattern>,
+    },
+
+    /// Holes - match anything
+    Hole,
+
+    /// Literals
+    BoolLit {
+        b: bool,
+    },
+    IntLit {
+        i: i32,
+    },
+    StrLit {
+        s: String,
+    },
+    RecLit {
+        fields: Vec<RecField<Pattern>>,
+    },
 }
 
 #[derive(Clone)]
@@ -392,6 +430,146 @@ pub fn infer(ctx: &Context, tm: &Tm) -> Result<(core::Tm, core::Vty), ElabError>
                     "trying to access field of a non-record",
                 )),
             }
+        }
+        TmData::Match { tm, branches } => {
+            // need to also check that each branch's pattern's ty matches the ty of tm
+            let (core_tm, core_ty) = infer(ctx, tm)?;
+
+            let mut final_ty = core::Vtm::AnyTy;
+
+            let mut final_branches = vec![];
+            for branch in branches {
+                let (core_branch, core_branch_ty) = infer_branch(ctx, branch, &core_ty)?;
+
+                // check that we can equate the branches
+                equate_ty(&branch.tm.location, &core_branch_ty, &final_ty)?;
+                // then, hold on to whichever is more precise
+                final_ty = final_ty.most_precise(&core_branch_ty).clone();
+                // and keep all the core branches
+                final_branches.push(core_branch);
+            }
+
+            // then, we would check for full coverage / completeness ... but let's not for now
+
+            Ok((
+                core::Tm::new(
+                    tm.location.clone(),
+                    core::TmData::Match {
+                        tm: Rc::new(core_tm),
+                        branches: final_branches,
+                    },
+                ),
+                final_ty,
+            ))
+        }
+    }
+}
+
+fn infer_branch(
+    ctx: &Context,
+    branch: &Branch,
+    ty: &core::Vtm,
+) -> Result<(core::Branch, core::Vtm), ElabError> {
+    // need to check that this branch's pattern's ty matches the ty of tm
+    let (matcher, ty1, bindings) = infer_pattern(ctx, &branch.pattern)?;
+    equate_ty(&branch.pattern.location, &ty1, ty)?;
+
+    // extend the context to include the new bindings.
+    let new_ctx = bindings.iter().fold(ctx.clone(), |ctx0, (name, t)| {
+        ctx0.bind_param(name.clone(), t.clone())
+    });
+
+    // then need to check the type of this branch's body, and return that
+    let (body, body_ty) = infer(&new_ctx, &branch.tm)?;
+    Ok((core::Branch { matcher, body }, body_ty))
+}
+
+fn infer_pattern(
+    ctx: &Context,
+    pattern: &Pattern,
+) -> Result<
+    (
+        Rc<dyn core::matcher::Matcher>,
+        core::Vtm,
+        Vec<(String, core::Vtm)>,
+    ),
+    ElabError,
+> {
+    match &pattern.data {
+        PatternData::Named { name, pattern } => {
+            // first, try to match the inner pattern
+            let (pattern_matcher, ty, mut binds) = infer_pattern(ctx, pattern)?;
+            // then, apply the name
+            binds.push((name.clone(), ty.clone()));
+            // and return a chained matcher
+            Ok((
+                Rc::new(core::matcher::Chain {
+                    m1: pattern_matcher,
+                    m2: Rc::new(core::matcher::Bind {}),
+                }),
+                ty,
+                binds,
+            ))
+        }
+        PatternData::Hole => Ok((Rc::new(core::matcher::Succeed {}), core::Vtm::AnyTy, vec![])),
+        PatternData::BoolLit { b } => {
+            let vtm = core::Vtm::Bool { b: *b };
+            Ok((
+                Rc::new(core::matcher::Equal { vtm }),
+                core::Vtm::BoolTy,
+                vec![],
+            ))
+        }
+        PatternData::IntLit { i } => {
+            let vtm = core::Vtm::Int { i: *i };
+            Ok((
+                Rc::new(core::matcher::Equal { vtm }),
+                core::Vtm::IntTy,
+                vec![],
+            ))
+        }
+        PatternData::StrLit { s } => {
+            let vtm = core::Vtm::Str { s: s.clone() };
+            Ok((
+                Rc::new(core::matcher::Equal { vtm }),
+                core::Vtm::StrTy,
+                vec![],
+            ))
+        }
+        PatternData::RecLit { fields } => {
+            let (matcher, tys, names): (
+                Rc<dyn core::matcher::Matcher>,
+                Vec<RecField<core::Vtm>>,
+                Vec<(String, core::Vtm)>,
+            ) = fields.iter().try_fold(
+                (
+                    Rc::new(core::matcher::Succeed {}) as Rc<dyn core::matcher::Matcher>,
+                    vec![],
+                    vec![],
+                ),
+                |(acc, tys, names), field| {
+                    let (m1, ty1, names1) = infer_pattern(ctx, &field.data)?;
+
+                    let mut tys1 = tys.clone();
+                    tys1.push(RecField::new(field.name.clone(), ty1));
+
+                    let names = names.iter().chain(&names1).cloned().collect::<Vec<_>>();
+
+                    Ok((
+                        Rc::new(core::matcher::Chain {
+                            m1: Rc::new(core::matcher::FieldAccess {
+                                name: field.name.clone(),
+                                inner: m1,
+                            }),
+                            m2: acc,
+                        }) as Rc<dyn core::matcher::Matcher>,
+                        tys1,
+                        names,
+                    ))
+                },
+            )?;
+
+            Ok((matcher, core::Vtm::RecTy { fields: tys }, names))
         }
     }
 }

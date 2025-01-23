@@ -36,10 +36,9 @@ fn main() {
     let config = codespan_reporting::term::Config::default();
 
     let code = "
-        let a = (t1 : Type, t2 : Type) : Type => (t1, t1) -> t2;
-        let b = (t : Type) : Type => a(t, t);
-
-        b(b(Int))
+        let not = (x : Bool) : Bool => if x is true => false | false => true;
+        let and = (x : Bool, y : Bool) : Bool => if x is true => y | false => false;
+        and(true, not(not(true)))
     ";
 
     println!("{}", fully_eval(code).unwrap());
@@ -112,13 +111,30 @@ mod test {
     use crate::fully_eval;
 
     #[test]
-    fn readme_example() {
+    fn readme1() {
         insta::assert_snapshot!(fully_eval("
             let f = (x : Int) : Type => Str;
             let g = (x : Int) : f(x) => 'hello';
 
             g(10)
         ").unwrap(), @"'hello'")
+    }
+
+    #[test]
+    fn readme2() {
+        insta::assert_snapshot!(fully_eval("
+            let rec = { name = 'dan', age = 40 };
+            let nameof = ( rec : { name : Str, age : Int } ) : Str => rec.name;
+            nameof(rec)
+        ").unwrap(), @"'dan'")
+    }
+    #[test]
+    fn readme3() {
+        insta::assert_snapshot!(fully_eval("
+            let not = (x : Bool) : Bool => if x is true => false | false => true;
+            let and = (x : Bool, y : Bool) : Bool => if x is true => y | false => false;
+            and(true, not(not(true)))
+        ").unwrap(), @"true")
     }
 
     #[test]
@@ -156,7 +172,7 @@ mod test {
     }
 
     #[test]
-    fn rec_proj() {
+    fn rec_proj1() {
         insta::assert_snapshot!(fully_eval("
             let f = { name = 'hello' };
             f.name
@@ -164,7 +180,7 @@ mod test {
     }
 
     #[test]
-    fn rec_proj_2() {
+    fn rec_proj2() {
         insta::assert_snapshot!(
             format!("{:?}", fully_eval("
                 let f = () : { name : Str } => { name = 'hello' };
@@ -174,7 +190,19 @@ mod test {
         )
     }
     #[test]
-    fn rec_proj_fail() {
+    fn rec_proj3() {
+        insta::assert_snapshot!(
+            format!("{:?}", fully_eval("
+                let f = () : { name : Str } => { name = 'hello' };
+                let g = (name : Str) : Int => 1;
+                g({f()}.name)
+            ")),
+            @r#"Ok("1")"#
+        )
+    }
+
+    #[test]
+    fn rec_proj_fail1() {
         insta::assert_snapshot!(
             format!("{:?}", fully_eval("
                 let f = () : { name : Int } => { name = 'hello' };
@@ -196,17 +224,6 @@ mod test {
     }
 
     #[test]
-    fn rec_proj_3() {
-        insta::assert_snapshot!(
-            format!("{:?}", fully_eval("
-                let f = () : { name : Str } => { name = 'hello' };
-                let g = (name : Str) : Int => 1;
-                g({f()}.name)
-            ")),
-            @r#"Ok("1")"#
-        )
-    }
-    #[test]
     fn rec_proj_fail3() {
         insta::assert_snapshot!(
             format!("{:?}", fully_eval("
@@ -215,6 +232,28 @@ mod test {
                 g({f()}.name)
             ")),
             @r#"Err(ElabError(ElabError { location: Location { start: 135, end: 145 }, message: "mismatched types: expected Int, found Str" }))"#
+        )
+    }
+
+    #[test]
+    fn pattern1() {
+        insta::assert_snapshot!(
+            format!("{:?}", fully_eval("
+                let f = (x : Bool) : Int => if x is true => 1 | false => 0;
+                f(true)
+            ")),
+            @r#"Ok("1")"#
+        )
+    }
+
+    #[test]
+    fn pattern2() {
+        insta::assert_snapshot!(
+            format!("{:?}", fully_eval("
+                let not = (x : Bool) : Bool => if x is true => false | false => true;
+                not(true)
+            ")),
+            @r#"Ok("false")"#
         )
     }
 }

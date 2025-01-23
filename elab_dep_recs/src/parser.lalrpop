@@ -36,7 +36,13 @@ TmData: surface::TmData = {
     <head:AtomicTm> "(" <args:List<Tm, ",">> ")" => surface::TmData::FunApp {
         head: Rc::new(head),
         args
-    }
+    },
+
+
+    "if" <tm:Tm> "is" <branches:NonEmptyList<<Branch>, "|">> => surface::TmData::Match {
+        tm: Rc::new(tm),
+        branches
+    },
 }
 Param: surface::Param = {
     <name:Name> ":" <ty:Tm> => surface::Param { name, ty }
@@ -47,6 +53,10 @@ RecTyField: util::RecField<surface::Tm> = {
 RecLitField: util::RecField<surface::Tm> = {
     <name:Name> "=" <ty:Tm> => util::RecField::new(name, ty)
 }
+PatternField: util::RecField<surface::Pattern> = {
+    <name:Name> "=" <pattern:Pattern> => util::RecField::new(name, pattern)
+}
+
 
 AtomicTmData: surface::TmData = {
     "{" <tm:TmData> "}" => tm,
@@ -55,6 +65,24 @@ AtomicTmData: surface::TmData = {
     <i:Num> => surface::TmData::IntLit { i },
     <s:r#"'([^'\\]|\\.)*'"#> => surface::TmData::StrLit { s: s.to_string() }
 }
+
+
+Branch: surface::Branch =
+    <pattern:Pattern> "=>" <tm:AtomicTm> => surface::Branch { pattern, tm };
+Pattern: surface::Pattern = Located<PatternData>;
+PatternData: surface::PatternData = {
+    <name:Name> ":" <pattern:Pattern> => surface::PatternData::Named { name, pattern: Rc::new(pattern) },
+    "_" => surface::PatternData::Hole,
+
+    <b:Bool> => surface::PatternData::BoolLit { b },
+    <i:Num> => surface::PatternData::IntLit { i },
+    <s:r#"'([^'\\]|\\.)*'"#> => surface::PatternData::StrLit { s: s.to_string() },
+
+
+    "{" <fields:List<PatternField, ",">> "}" => surface::PatternData::RecLit { fields },
+}
+
+
 
 Bool: bool = {
     "true" => true,

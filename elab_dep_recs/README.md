@@ -7,9 +7,7 @@ Done:
 - Basic types `Bool`, `Int` and `Str`, with literals such as `false`, `10` and `'hello'`.
 - Function types `(T1, T2 .. Tn) -> B`, and function literals `(a1 : T1, a2 : T2, .. an : Tn) : B => ..`. Functions take multiple arguments. Arguments and return types can all be either terms or types. Hence, the language is dependently typed. Functions are applied with parentheses `f(x)`.
 - Record types `{ name : Str, age : Int }` with literals like `{ name = 'dan', age = 40 }`.
-
-To do:
-- Pattern matching
+- Pattern matching, with syntax like `if x is true => .. | false => ..`
 
 Examples:
 ```
@@ -17,4 +15,22 @@ let f = (x : Int) : Type => Str;
 let g = (x : Int) : f(x) => 'hello';
 
 g(10)
+```
+
+```
+let rec = { name = 'dan', age = 40 };
+let nameof = ( rec : { name : Str, age : Int } ) : Str => rec.name;
+nameof(rec)
+```
+
+```
+let not = (x : Bool) : Bool => if x is 
+      true => false 
+    | false => true;
+
+let and = (x : Bool, y : Bool) : Bool => if x is 
+      true => y 
+    | false => false;
+
+and(true, not(not(true)))
 ```
