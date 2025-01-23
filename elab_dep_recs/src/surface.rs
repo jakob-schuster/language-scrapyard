@@ -191,7 +191,7 @@ pub fn infer(ctx: &Context, tm: &Tm) -> Result<(core::Tm, core::Vty), ElabError>
                         .iter()
                         .map(|arg| {
                             // each arg must be a Type!
-                            Ok(check(ctx, arg, &core::Vty::Univ)?)
+                            check(ctx, arg, &core::Vty::Univ)
                         })
                         .collect::<Result<Vec<_>, _>>()?,
                     // the body must also be a type!
@@ -253,8 +253,21 @@ pub fn infer(ctx: &Context, tm: &Tm) -> Result<(core::Tm, core::Vty), ElabError>
                     args: args_ty,
                     body: body_vty,
                 } => {
+                    // first make sure the argument lists are the same length
+                    if !args.len().eq(&args_ty.len()) {
+                        return Err(ElabError::new(
+                            &tm.location,
+                            &format!(
+                                "function was given {} arguments, expected {}",
+                                args.len(),
+                                args_ty.len()
+                            ),
+                        ));
+                    }
+
                     // elaborate each argument, and make sure they all
                     // correspond to the function's argument type
+
                     let arg_tms = args
                         .iter()
                         .zip(args_ty)

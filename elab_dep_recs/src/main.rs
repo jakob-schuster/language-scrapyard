@@ -27,7 +27,9 @@ fn main() {
 
     let code = "
         let a = (t1 : Type, t2 : Type) : Type => (t1, t1) -> t2;
-        a(Str, Int)
+        let b = (t : Type) : Type => a(t, t);
+
+        b(b(Int))
     ";
 
     println!("{}", fully_eval(code).unwrap());
@@ -91,4 +93,37 @@ fn fully_eval(code: &str) -> anyhow::Result<String> {
     let vtm = core::eval(&surface::Context::standard_library().tms, &ctm).unwrap();
 
     Ok(vtm.to_string())
+}
+
+#[cfg(test)]
+mod test {
+    use crate::fully_eval;
+
+    #[test]
+    fn code1() {
+        insta::assert_snapshot!(fully_eval("let a = (x : Int) : Int => x; a(10)").unwrap(), @"10")
+    }
+
+    #[test]
+    fn code2() {
+        let code = "
+            let a = (t1 : Type, t2 : Type) : Type => (t1, t1) -> t2;
+            let b = (t : Type) : Type => a(t, t);
+
+            b(b(Int))
+        ";
+
+        let result = fully_eval(code).unwrap();
+        insta::assert_snapshot!(result, @"((Int, Int) -> Int, (Int, Int) -> Int) -> (Int, Int) -> Int");
+    }
+
+    #[test]
+    fn code3() {
+        insta::assert_snapshot!(fully_eval("
+            let f = (x : Int) : Type => Str;
+            let g = (x : Int) : f(x) => 'hello';
+
+            g(10)
+        ").unwrap(), @"'hello'")
+    }
 }

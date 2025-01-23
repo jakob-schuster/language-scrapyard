@@ -12,3 +12,6 @@ lalrpop-util = { version = "0.21.0", features = ["lexer", "unicode"] }
 
 [build-dependencies]
 lalrpop = "0.22.0"
+
+[dev-dependencies]
+insta = { version = "1.42.0", features = ["yaml"] }
