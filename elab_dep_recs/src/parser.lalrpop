@@ -29,6 +29,13 @@ TmData: surface::TmData = {
         body: Rc::new(body),
     },
 
+    "#" "[" <f:Num>"]" "(" <args:List<Param, ",">> ")" ":" <ty:Tm> => surface::TmData::FunForeign {
+        args,
+        ty: Rc::new(ty),
+        f: f as usize,
+    },
+
+
     "{" <fields:NonEmptyList<RecTyField, ",">> "}" => surface::TmData::RecTy { fields },
     "{" <fields:NonEmptyList<RecLitField, ",">> "}" => surface::TmData::RecLit { fields },
     <tm:AtomicTm> "." <name:Name> => surface::TmData::RecProj { tm: Rc::new(tm), name },
@@ -63,7 +70,7 @@ AtomicTmData: surface::TmData = {
     <name:Name> => surface::TmData::Name { name },
     <b:Bool> => surface::TmData::BoolLit { b },
     <i:Num> => surface::TmData::IntLit { i },
-    <s:r#"'([^'\\]|\\.)*'"#> => surface::TmData::StrLit { s: s.to_string() }
+    <s:r#"'([^'\\]|\\.)*'"#> => surface::TmData::StrLit { s: s[1..s.len()-1].to_string() }
 }
 
 
@@ -76,7 +83,7 @@ PatternData: surface::PatternData = {
 
     <b:Bool> => surface::PatternData::BoolLit { b },
     <i:Num> => surface::PatternData::IntLit { i },
-    <s:r#"'([^'\\]|\\.)*'"#> => surface::PatternData::StrLit { s: s.to_string() },
+    <s:r#"'([^'\\]|\\.)*'"#> => surface::PatternData::StrLit { s: s[1..s.len()-1].to_string() },
 
 
     "{" <fields:List<PatternField, ",">> "}" => surface::PatternData::RecLit { fields },

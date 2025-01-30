@@ -1,9 +1,10 @@
 use itertools::Itertools;
 
-use crate::util::{self, Env, Located, RecField};
+use crate::util::{self, Env, Located, Location, RecField};
 
 use std::{fmt::Display, rc::Rc};
 
+pub mod library;
 pub mod matcher;
 
 // De Bruijn index, represents a variable occurrence by the number of
@@ -71,6 +72,10 @@ pub enum TmData {
         head: Rc<Tm>,
         args: Vec<Tm>,
     },
+    /// A foreign function; contains the Rust function it denotes
+    FunForeign {
+        f: Rc<dyn Fn(&Location, &[Vtm]) -> Result<Vtm, EvalError>>,
+    },
 
     /// A record type; identified by the set of names and types of its fields
     RecTy {
@@ -125,6 +130,7 @@ impl Tm {
             TmData::FunApp { head, args } => {
                 head.is_bound(index) || args.iter().any(|arg| arg.is_bound(index))
             }
+            TmData::FunForeign { f } => false,
 
             TmData::RecTy { fields } => fields.iter().any(|field| field.data.is_bound(index)),
             TmData::RecLit { fields } => fields.iter().any(|field| field.data.is_bound(index)),
@@ -142,7 +148,9 @@ impl Tm {
 #[derive(Clone)]
 pub enum Vtm {
     // Neutral terms
-    Ntm { ntm: Ntm },
+    Ntm {
+        ntm: Ntm,
+    },
 
     Univ,
 
@@ -150,19 +158,44 @@ pub enum Vtm {
     AnyTy,
 
     BoolTy,
-    Bool { b: bool },
+    Bool {
+        b: bool,
+    },
 
     IntTy,
-    Int { i: i32 },
+    Int {
+        i: i32,
+    },
 
     StrTy,
-    Str { s: String },
+    Str {
+        s: String,
+    },
 
-    FunTy { args: Vec<Vtm>, body: Rc<Vtm> },
-    Fun { body: FunData },
+    FunTy {
+        args: Vec<Vtm>,
+        body: Rc<Vtm>,
+    },
+    Fun {
+        body: FunData,
+    },
+    FunForeign {
+        f: Rc<dyn Fn(&Location, &[Vtm]) -> Result<Vtm, EvalError>>,
+    },
+    // Represents a dependent return type of a function,
+    // which can only be elaborated when the function is actually applied.
+    // Should probably come back and clean all of this up conceptually.
+    FunReturnTyAwaiting {
+        data: FunData,
+        expected_ty: Rc<Vty>,
+    },
 
-    RecTy { fields: Vec<RecField<Vtm>> },
-    Rec { fields: Vec<RecField<Vtm>> },
+    RecTy {
+        fields: Vec<RecField<Vtm>>,
+    },
+    Rec {
+        fields: Vec<RecField<Vtm>>,
+    },
 }
 pub type Vty = Vtm;
 
@@ -188,6 +221,7 @@ impl PartialEq for Vtm {
             | (Vtm::BoolTy, Vtm::BoolTy)
             | (Vtm::IntTy, Vtm::IntTy)
             | (Vtm::StrTy, Vtm::StrTy) => true,
+
             (Vtm::Bool { b: b1 }, Vtm::Bool { b: b2 }) => b1.eq(b2),
             (Vtm::Int { i: i1 }, Vtm::Int { i: i2 }) => i1.eq(i2),
             (Vtm::Str { s: s1 }, Vtm::Str { s: s2 }) => s1.eq(s2),
@@ -244,6 +278,11 @@ impl Vtm {
         };
 
         match (self, other) {
+            // Neutrals we just let through; what else can we do?
+            (Vtm::Ntm { ntm: _ }, _) | (_, Vtm::Ntm { ntm: _ }) => true,
+            // Similar with awaiting
+            (Vtm::FunReturnTyAwaiting { .. }, _) | (_, Vtm::FunReturnTyAwaiting { .. }) => true,
+
             // Any is equivalent to everything
             (Vtm::AnyTy, _) | (_, Vtm::AnyTy) => true,
 
@@ -339,8 +378,8 @@ impl Vtm {
 /// Function type that explicitly captures its environment.
 #[derive(Clone)]
 pub struct FunData {
-    env: Env<Vtm>,
-    body: Tm,
+    pub env: Env<Vtm>,
+    pub body: Tm,
 }
 
 impl FunData {
@@ -353,10 +392,23 @@ impl FunData {
     }
 }
 
-#[derive(Debug)]
+pub struct ForeignFunData {
+    f: Rc<dyn Fn()>,
+}
+
+#[derive(Clone, Debug)]
 pub struct EvalError {
     pub location: util::Location,
     pub message: String,
+}
+
+impl EvalError {
+    fn new(location: &util::Location, message: &str) -> EvalError {
+        EvalError {
+            location: location.clone(),
+            message: message.to_string(),
+        }
+    }
 }
 
 pub fn eval(env: &Env<Vtm>, tm: &Tm) -> Result<Vtm, EvalError> {
@@ -389,13 +441,14 @@ pub fn eval(env: &Env<Vtm>, tm: &Tm) -> Result<Vtm, EvalError> {
             },
         }),
         TmData::FunApp { head, args } => app(
+            &tm.location,
             &eval(env, head)?,
             args.iter()
                 .map(|arg| eval(env, arg))
                 .collect::<Result<Vec<_>, _>>()?,
         ),
 
-        TmData::Var { index } => Ok(env.get(*index).clone()),
+        TmData::Var { index } => Ok(env.get_index(*index).clone()),
 
         TmData::RecTy { fields } => Ok(Vtm::RecTy {
             fields: fields
@@ -435,34 +488,59 @@ pub fn eval(env: &Env<Vtm>, tm: &Tm) -> Result<Vtm, EvalError> {
         TmData::Match { tm, branches } => {
             let vtm = eval(env, tm)?;
 
-            // go through each branch
-            for branch in branches {
-                if let Some(vtms) = branch.matcher.evaluate(env, &vtm) {
-                    // bind all the values in the env
-                    let new_env = vtms
-                        .iter()
-                        .fold(env.clone(), |env0, vtm| env0.with(vtm.clone()));
+            match vtm {
+                Vtm::Ntm { ntm } => Ok(Vtm::Ntm {
+                    ntm: Ntm::Match {
+                        tm: Rc::new(ntm),
+                        branches: branches.clone(),
+                    },
+                }),
+                _ => {
+                    // go through each branch
+                    for branch in branches {
+                        if let Some(vtms) = branch.matcher.evaluate(env, &vtm) {
+                            // bind all the values in the env
+                            let new_env = vtms
+                                .iter()
+                                .fold(env.clone(), |env0, vtm| env0.with(vtm.clone()));
 
-                    // evaluate the arm, just for the first one that matches
-                    return eval(&new_env, &branch.body);
+                            // evaluate the arm, just for the first one that matches
+                            return eval(&new_env, &branch.body);
+                        }
+                    }
+
+                    panic!("incomplete match?!")
                 }
             }
-
-            panic!("incomplete match?!")
         }
+        TmData::FunForeign { f } => Ok(Vtm::FunForeign { f: f.clone() }),
     }
 }
 
-fn app(head: &Vtm, args: Vec<Vtm>) -> Result<Vtm, EvalError> {
-    match head {
-        Vtm::Ntm { ntm } => Ok(Vtm::Ntm {
+fn app(location: &Location, head: &Vtm, args: Vec<Vtm>) -> Result<Vtm, EvalError> {
+    if args.iter().any(|arg| match arg {
+        Vtm::Ntm { ntm: _ } => true,
+        _ => false,
+    }) {
+        // one argument was a neutral - we cannot proceed.
+        Ok(Vtm::Ntm {
             ntm: Ntm::FunApp {
-                head: Rc::new(ntm.clone()),
+                head: Rc::new(head.clone()),
                 args,
             },
-        }),
-        Vtm::Fun { body } => body.app(&args),
-        _ => panic!("invalid application?!"),
+        })
+    } else {
+        match head {
+            Vtm::Ntm { ntm } => Ok(Vtm::Ntm {
+                ntm: Ntm::FunApp {
+                    head: Rc::new(Vtm::Ntm { ntm: ntm.clone() }),
+                    args,
+                },
+            }),
+            Vtm::Fun { body } => body.app(&args),
+            Vtm::FunForeign { f } => f(location, &args),
+            _ => panic!("invalid application?!"),
+        }
     }
 }
 
@@ -471,9 +549,11 @@ fn app(head: &Vtm, args: Vec<Vtm>) -> Result<Vtm, EvalError> {
 pub enum Ntm {
     Var { level: usize },
 
-    FunApp { head: Rc<Ntm>, args: Vec<Vtm> },
+    FunApp { head: Rc<Vtm>, args: Vec<Vtm> },
 
     RecProj { tm: Rc<Ntm>, name: String },
+
+    Match { tm: Rc<Ntm>, branches: Vec<Branch> },
 }
 
 impl Display for Vtm {
@@ -490,7 +570,7 @@ impl Display for Vtm {
             Vtm::Int { i } => i.fmt(f),
 
             Vtm::StrTy => "Str".fmt(f),
-            Vtm::Str { s } => s.fmt(f),
+            Vtm::Str { s } => format!("'{}'", s).fmt(f),
 
             Vtm::FunTy { args, body } => format!(
                 "({}) -> {}",
@@ -501,7 +581,11 @@ impl Display for Vtm {
                 body
             )
             .fmt(f),
-            Vtm::Fun { body } => "#func".fmt(f),
+            Vtm::Fun { body } => format!("#func({})", body).fmt(f),
+            Vtm::FunForeign { f: _ } => "#func-foreign".fmt(f),
+            Vtm::FunReturnTyAwaiting { data, expected_ty } => {
+                format!("#awaiting({}, {})", data, expected_ty).fmt(f)
+            }
 
             Vtm::RecTy { fields } => format!(
                 "{{ {} }}",
@@ -527,10 +611,16 @@ impl Display for Vtm {
     }
 }
 
+impl Display for FunData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        format!("{} :: {}", self.body, self.env).fmt(f)
+    }
+}
+
 impl Display for Ntm {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Ntm::Var { level } => format!("[lvl {}]", level).fmt(f),
+            Ntm::Var { level } => format!("[level {}]", level).fmt(f),
             Ntm::FunApp { head, args } => format!(
                 "{}({})",
                 head,
@@ -541,6 +631,86 @@ impl Display for Ntm {
             )
             .fmt(f),
             Ntm::RecProj { tm, name } => format!("{}.{}", tm, name).fmt(f),
+            Ntm::Match { tm, branches: _ } => format!("#match({})", tm).fmt(f),
         }
+    }
+}
+
+impl Display for TmData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TmData::Let { head, body } => format!("let {}; {}", head, body).fmt(f),
+            TmData::Var { index } => format!("#[{}]", index).fmt(f),
+            TmData::Univ => "Univ".fmt(f),
+            TmData::BoolTy => "Bool".fmt(f),
+            TmData::BoolLit { b } => b.fmt(f),
+            TmData::IntTy => "Int".fmt(f),
+            TmData::IntLit { i } => i.fmt(f),
+            TmData::StrTy => "Str".fmt(f),
+            TmData::StrLit { s } => format!("'{}'", s).fmt(f),
+            TmData::FunTy { args, body } => format!(
+                "({}) -> {}",
+                args.iter()
+                    .map(|a| a.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                body
+            )
+            .fmt(f),
+            TmData::FunLit { args, body } => format!(
+                "({}) => {}",
+                args.iter()
+                    .map(|a| a.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                body
+            )
+            .fmt(f),
+            TmData::FunApp { head, args } => format!(
+                "({})({})",
+                head,
+                args.iter()
+                    .map(|a| a.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+            .fmt(f),
+            TmData::FunForeign { f: _ } => "#func-foreign".fmt(f),
+            TmData::RecTy { fields } => format!(
+                "{{ {} }}",
+                fields
+                    .iter()
+                    .map(|f| f.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+            .fmt(f),
+            TmData::RecLit { fields } => format!(
+                "{{ {} }}",
+                fields
+                    .iter()
+                    .map(|f| f.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+            .fmt(f),
+            TmData::RecProj { tm, name } => format!("{}.{}", tm, name).fmt(f),
+            TmData::Match { tm, branches } => format!(
+                "if {} is {}",
+                tm,
+                branches
+                    .iter()
+                    .map(|b| b.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            )
+            .fmt(f),
+        }
+    }
+}
+
+impl Display for Branch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        format!("#matcher => {}", self.body).fmt(f)
     }
 }

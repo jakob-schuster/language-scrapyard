@@ -8,6 +8,7 @@ Done:
 - Function types `(T1, T2 .. Tn) -> B`, and function literals `(a1 : T1, a2 : T2, .. an : Tn) : B => ..`. Functions take multiple arguments. Arguments and return types can all be either terms or types. Hence, the language is dependently typed. Functions are applied with parentheses `f(x)`.
 - Record types `{ name : Str, age : Int }` with literals like `{ name = 'dan', age = 40 }`.
 - Pattern matching, with syntax like `if x is true => .. | false => ..`
+- Foreign functions (sort of... it's a library of hardcoded Rust functions that you can wrap, declaring their argument and return types)
 
 Examples:
 ```
@@ -24,13 +25,29 @@ nameof(rec)
 ```
 
 ```
-let not = (x : Bool) : Bool => if x is 
-      true => false 
+let not = (x : Bool) : Bool => if x is
+      true => false
     | false => true;
 
-let and = (x : Bool, y : Bool) : Bool => if x is 
-      true => y 
+let and = (x : Bool, y : Bool) : Bool => if x is
+      true => y
     | false => false;
 
 and(true, not(not(true)))
+```
+
+Note that this will work:
+```
+let f = (x : Int) : Type => if x is 0 => Str | _ => Int;
+let g = (x : Int) : f(x) => 'hello';
+
+g(0)
+```
+
+But this will produce an error:
+```
+let f = (x : Int) : Type => if x is 0 => Str | _ => Int;
+let g = (x : Int) : f(x) => 'hello';
+
+g(1)
 ```

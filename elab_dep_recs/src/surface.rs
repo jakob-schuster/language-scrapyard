@@ -1,7 +1,10 @@
+use itertools::Itertools;
+
 use crate::{
-    core::{self, eval, EvalError},
-    util::{self, Env, Located, RecField},
+    core::{self, eval, library, EvalError, Vtm, Vty},
+    util::{self, Env, Located, Location, RecField},
 };
+use std::fmt::Display;
 use std::rc::Rc;
 
 pub type Tm = Located<TmData>;
@@ -35,6 +38,13 @@ pub enum TmData {
         args: Vec<Param>,
         ty: Rc<Ty>,
         body: Rc<Tm>,
+    },
+    // Foreign functions have arguments and a return type,
+    // but they only contain an index into a built-in library
+    FunForeign {
+        args: Vec<Param>,
+        ty: Rc<Ty>,
+        f: usize,
     },
     FunApp {
         head: Rc<Tm>,
@@ -159,18 +169,46 @@ impl Context {
         // Find the index of most recent binding in the context identified by
         // name, starting from the most recent binding. This gives us the
         // de Bruijn index of the variable.
-        let index = self.names.find_last(&name)?;
-        let vty = self.tys.get(index);
+        let index = self.size - 1 - self.names.find_last(&name)?;
+        let vty = self.tys.get_index(index);
 
         Some((index, vty.clone()))
     }
 
     pub fn standard_library() -> Context {
-        Context::default()
-            .bind_def("Type".to_string(), core::Vty::Univ, core::Vty::Univ)
-            .bind_def("Bool".to_string(), core::Vty::Univ, core::Vty::BoolTy)
-            .bind_def("Int".to_string(), core::Vty::Univ, core::Vty::IntTy)
-            .bind_def("Str".to_string(), core::Vty::Univ, core::Vty::StrTy)
+        let entries = vec![
+            ("Type", core::TmData::Univ, core::TmData::Univ),
+            ("Bool", core::TmData::Univ, core::TmData::BoolTy),
+            ("Int", core::TmData::Univ, core::TmData::IntTy),
+            ("Str", core::TmData::Univ, core::TmData::StrTy),
+        ];
+
+        let a = entries
+            .iter()
+            .try_fold(Context::default(), |ctx, (name, ty, tm)| {
+                let ty1 = core::eval(&ctx.tms, &core::Tm::new(Location::new(0, 0), ty.clone()))?;
+                let tm1 = core::eval(&ctx.tms, &core::Tm::new(Location::new(0, 0), tm.clone()))?;
+
+                Ok::<Context, EvalError>(ctx.bind_def(name.to_string(), ty1, tm1))
+            })
+            .expect("could not evaluate standard library!");
+        a
+    }
+}
+
+impl Display for Context {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for i in 0..self.size {
+            format!(
+                "({}, {}, {}), ",
+                self.names.get_level(i),
+                self.tms.get_level(i),
+                self.tys.get_level(i)
+            )
+            .fmt(f)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -281,8 +319,35 @@ pub fn infer(ctx: &Context, tm: &Tm) -> Result<(core::Tm, core::Vty), ElabError>
             // (so we have access to all the parameters we've just bound! important!)
             let ty = check(&new_ctx, ty, &core::Vty::Univ)?;
             let vty = eval(&new_ctx.tms, &ty).map_err(ElabError::from_eval_error)?;
-            // then, make sure the body's type corresponds to the Vty
-            let body_tm = check(&new_ctx, body, &vty)?;
+
+            // then, we need to see if the vty is concrete or if it's neutral
+            let (body_tm, vty1) = match vty {
+                core::Vtm::Ntm { ntm } => {
+                    // if it's neutral, we need to create something special:
+                    // a new vty that is just a function from some arguments
+                    // to a new vty (which we expect to be concrete)
+
+                    // we also need to just infer the body's type, and
+                    // keep that too; once the function is called and given
+                    // arguments, these can be compared
+                    let (body_tm, body_vty) = infer(&new_ctx, body)?;
+                    (
+                        body_tm,
+                        core::Vtm::FunReturnTyAwaiting {
+                            data: core::FunData {
+                                env: ctx.tms.clone(),
+                                body: ty,
+                            },
+                            expected_ty: Rc::new(body_vty),
+                        },
+                    )
+                }
+                _ => {
+                    // then, make sure the body's type corresponds to the Vty
+                    let body_tm = check(&new_ctx, body, &vty)?;
+                    (body_tm, vty)
+                }
+            };
 
             Ok((
                 core::Tm::new(
@@ -294,12 +359,59 @@ pub fn infer(ctx: &Context, tm: &Tm) -> Result<(core::Tm, core::Vty), ElabError>
                 ),
                 core::Vty::FunTy {
                     args: arg_vtys,
+                    body: Rc::new(vty1),
+                },
+            ))
+        }
+
+        TmData::FunForeign { args, ty, f } => {
+            // then, make sure each param has a type associated which is actually a type
+            let param_tms = args
+                .iter()
+                .map(|arg| Ok((arg.name.clone(), check(ctx, &arg.ty, &core::Vty::Univ)?)))
+                .collect::<Result<Vec<_>, _>>()?;
+
+            let arg_vtys = param_tms
+                .clone()
+                .iter()
+                .map(|(_, arg)| eval(&ctx.tms, arg))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(ElabError::from_eval_error)?;
+
+            // create a new context with all the parameters bound
+            let new_ctx = param_tms
+                .clone()
+                .iter()
+                .try_fold(ctx.clone(), |ctx0, (name, ty)| {
+                    // evaluate the type
+                    let vty = eval(&ctx.tms, ty).map_err(ElabError::from_eval_error)?;
+                    // bind it in the context
+                    Ok(ctx0.bind_param(name.clone(), vty))
+                })?;
+
+            // make sure the function's type is in fact a type in this new context
+            // (so we have access to all the parameters we've just bound! important!)
+            let ty = check(&new_ctx, ty, &core::Vty::Univ)?;
+            let vty = eval(&new_ctx.tms, &ty).map_err(ElabError::from_eval_error)?;
+
+            Ok((
+                core::Tm::new(
+                    tm.location.clone(),
+                    core::TmData::FunForeign {
+                        f: library::foreign(&tm.location, *f)
+                            .map_err(ElabError::from_eval_error)?,
+                    },
+                ),
+                core::Vty::FunTy {
+                    args: arg_vtys,
                     body: Rc::new(vty),
                 },
             ))
         }
-        TmData::FunApp { head, args } => match infer(ctx, head)? {
-            (head_tm, head_vty) => match head_vty {
+
+        TmData::FunApp { head, args } => {
+            let (head_tm, head_vty) = infer(ctx, head)?;
+            match head_vty {
                 core::Vtm::FunTy {
                     args: args_ty,
                     body: body_vty,
@@ -318,6 +430,7 @@ pub fn infer(ctx: &Context, tm: &Tm) -> Result<(core::Tm, core::Vty), ElabError>
 
                     // elaborate each argument, and make sure they all
                     // correspond to the function's argument type
+                    // - and if any are neutrals, the whole thing is a neutral
 
                     let arg_tms = args
                         .iter()
@@ -329,6 +442,25 @@ pub fn infer(ctx: &Context, tm: &Tm) -> Result<(core::Tm, core::Vty), ElabError>
                         })
                         .collect::<Result<Vec<_>, _>>()?;
 
+                    // check if the return type needs to be evaluated
+                    let body_vty1 = match body_vty.as_ref() {
+                        Vtm::FunReturnTyAwaiting { data, expected_ty } => {
+                            let arg_vtms = arg_tms
+                                .iter()
+                                .map(|arg| eval(&ctx.tms, arg))
+                                .collect::<Result<Vec<_>, _>>()
+                                .map_err(ElabError::from_eval_error)?;
+                            // apply the vty function to get the concrete vty out
+                            let vty = data.app(&arg_vtms).map_err(ElabError::from_eval_error)?;
+
+                            // now, see if the function type actually matched what its body was going to be
+                            equate_ty(&tm.location, &vty, expected_ty)?;
+
+                            Ok(vty)
+                        }
+                        _ => Ok(body_vty.as_ref().clone()),
+                    }?;
+
                     Ok((
                         core::Tm::new(
                             tm.location.clone(),
@@ -337,7 +469,7 @@ pub fn infer(ctx: &Context, tm: &Tm) -> Result<(core::Tm, core::Vty), ElabError>
                                 args: arg_tms,
                             },
                         ),
-                        body_vty.as_ref().clone(),
+                        body_vty1,
                     ))
                 }
                 _ => Err(ElabError::new(
@@ -347,9 +479,8 @@ pub fn infer(ctx: &Context, tm: &Tm) -> Result<(core::Tm, core::Vty), ElabError>
                         head_vty
                     ),
                 )),
-            },
-        },
-
+            }
+        }
         TmData::RecTy { fields } => {
             // first, check that all the fields are types
             Ok((

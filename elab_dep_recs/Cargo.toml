@@ -9,6 +9,7 @@ codespan-reporting = "*"
 codespan = "*"
 itertools = "*"
 lalrpop-util = { version = "0.21.0", features = ["lexer", "unicode"] }
+csv = "*"
 
 [build-dependencies]
 lalrpop = "0.22.0"

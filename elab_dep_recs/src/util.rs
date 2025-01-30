@@ -1,5 +1,7 @@
 use std::fmt::Display;
 
+use itertools::Itertools;
+
 #[derive(Debug, Clone)]
 pub struct Location {
     pub start: usize,
@@ -12,7 +14,7 @@ impl Location {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Located<T> {
     pub location: Location,
     pub data: T,
@@ -24,7 +26,13 @@ impl<T> Located<T> {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+impl<T: Display> Display for Located<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.data.fmt(f)
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct RecField<T> {
     pub name: String,
     pub data: T,
@@ -47,16 +55,36 @@ pub struct Env<A> {
     vec: Vec<A>,
 }
 
-impl<A> Env<A> {
+impl<A: std::fmt::Display> Env<A> {
     pub fn iter(&self) -> std::slice::Iter<'_, A> {
         self.vec.iter()
     }
 
-    pub fn get(&self, i: usize) -> &A {
+    pub fn get_level(&self, i: usize) -> &A {
         match self.vec.get(i) {
             Some(a) => a,
             None => panic!("Bad index in env!"),
         }
+    }
+
+    pub fn get_index(&self, i: usize) -> &A {
+        match self.vec.get(self.vec.len() - 1 - i) {
+            Some(a) => a,
+            None => panic!("Bad index in env!"),
+        }
+    }
+}
+
+impl<A: Display> Display for Env<A> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        format!(
+            "{{ {} }}",
+            self.iter()
+                .map(|a| a.to_string())
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
+        .fmt(f)
     }
 }
 

@@ -3,6 +3,7 @@
 
 mod core;
 mod surface;
+mod test;
 mod util;
 
 use core::EvalError;
@@ -32,13 +33,11 @@ pub struct ParseError {
 }
 
 fn main() {
-    let mut writer = StandardStream::stderr(term::termcolor::ColorChoice::Always);
-    let config = codespan_reporting::term::Config::default();
-
     let code = "
-        let not = (x : Bool) : Bool => if x is true => false | false => true;
-        let and = (x : Bool, y : Bool) : Bool => if x is true => y | false => false;
-        and(true, not(not(true)))
+        let f = (x : Int) : Type => if x is 0 => Str | _ => Int;
+        let g = (x : Int) : f(x) => 'hello';
+
+        g(10)
     ";
 
     println!("{}", fully_eval(code).unwrap());
@@ -100,160 +99,16 @@ fn fully_eval(code: &str) -> Result<String, Error> {
 
         Error::ElabError(e)
     })?;
-    let vtm = core::eval(&surface::Context::standard_library().tms, &ctm)
-        .map_err(|e| Error::EvalError(e))?;
+    let vtm = core::eval(&surface::Context::standard_library().tms, &ctm).map_err(|e| {
+        let file = SimpleFile::new("<code>", code);
+        let diagnostic = Diagnostic::error()
+            .with_message(e.clone().message)
+            .with_labels(vec![Label::primary((), e.location.start..e.location.end)])
+            .with_notes(vec![]);
+
+        term::emit(&mut writer, &config, &file, &diagnostic);
+        Error::EvalError(e)
+    })?;
 
     Ok(vtm.to_string())
-}
-
-#[cfg(test)]
-mod test {
-    use crate::fully_eval;
-
-    #[test]
-    fn readme1() {
-        insta::assert_snapshot!(fully_eval("
-            let f = (x : Int) : Type => Str;
-            let g = (x : Int) : f(x) => 'hello';
-
-            g(10)
-        ").unwrap(), @"'hello'")
-    }
-
-    #[test]
-    fn readme2() {
-        insta::assert_snapshot!(fully_eval("
-            let rec = { name = 'dan', age = 40 };
-            let nameof = ( rec : { name : Str, age : Int } ) : Str => rec.name;
-            nameof(rec)
-        ").unwrap(), @"'dan'")
-    }
-    #[test]
-    fn readme3() {
-        insta::assert_snapshot!(fully_eval("
-            let not = (x : Bool) : Bool => if x is true => false | false => true;
-            let and = (x : Bool, y : Bool) : Bool => if x is true => y | false => false;
-            and(true, not(not(true)))
-        ").unwrap(), @"true")
-    }
-
-    #[test]
-    fn fun_app() {
-        insta::assert_snapshot!(fully_eval("let a = (x : Int) : Int => x; a(10)").unwrap(), @"10")
-    }
-
-    #[test]
-    fn nested_fun_app() {
-        let code = "
-            let a = (t1 : Type, t2 : Type) : Type => (t1, t1) -> t2;
-            let b = (t : Type) : Type => a(t, t);
-
-            b(b(Int))
-        ";
-
-        let result = fully_eval(code).unwrap();
-        insta::assert_snapshot!(result, @"((Int, Int) -> Int, (Int, Int) -> Int) -> (Int, Int) -> Int");
-    }
-
-    #[test]
-    fn rec_ty() {
-        insta::assert_snapshot!(fully_eval("
-            let f = { name: Str };
-            f
-        ").unwrap(), @"{ name = Str }")
-    }
-
-    #[test]
-    fn rec_lit() {
-        insta::assert_snapshot!(fully_eval("
-            let f = { name = 'hello' };
-            f
-        ").unwrap(), @"{ name = 'hello' }")
-    }
-
-    #[test]
-    fn rec_proj1() {
-        insta::assert_snapshot!(fully_eval("
-            let f = { name = 'hello' };
-            f.name
-        ").unwrap(), @"'hello'")
-    }
-
-    #[test]
-    fn rec_proj2() {
-        insta::assert_snapshot!(
-            format!("{:?}", fully_eval("
-                let f = () : { name : Str } => { name = 'hello' };
-                {f()}.name
-            ")),
-            @r#"Ok("'hello'")"#
-        )
-    }
-    #[test]
-    fn rec_proj3() {
-        insta::assert_snapshot!(
-            format!("{:?}", fully_eval("
-                let f = () : { name : Str } => { name = 'hello' };
-                let g = (name : Str) : Int => 1;
-                g({f()}.name)
-            ")),
-            @r#"Ok("1")"#
-        )
-    }
-
-    #[test]
-    fn rec_proj_fail1() {
-        insta::assert_snapshot!(
-            format!("{:?}", fully_eval("
-                let f = () : { name : Int } => { name = 'hello' };
-                {f()}.name
-            ")),
-            @r#"Err(ElabError(ElabError { location: Location { start: 48, end: 66 }, message: "mismatched types: expected { name = Int }, found { name = Str }" }))"#
-        )
-    }
-
-    #[test]
-    fn rec_proj_fail2() {
-        insta::assert_snapshot!(
-            format!("{:?}", fully_eval("
-                let f = () : { name : Str } => { name = 'hello' };
-                {f()}.age
-            ")),
-            @r#"Err(ElabError(ElabError { location: Location { start: 84, end: 89 }, message: "trying to access non-existent field" }))"#
-        )
-    }
-
-    #[test]
-    fn rec_proj_fail3() {
-        insta::assert_snapshot!(
-            format!("{:?}", fully_eval("
-                let f = () : { name : Str } => { name = 'hello' };
-                let g = (age : Int ) : Int => 1;
-                g({f()}.name)
-            ")),
-            @r#"Err(ElabError(ElabError { location: Location { start: 135, end: 145 }, message: "mismatched types: expected Int, found Str" }))"#
-        )
-    }
-
-    #[test]
-    fn pattern1() {
-        insta::assert_snapshot!(
-            format!("{:?}", fully_eval("
-                let f = (x : Bool) : Int => if x is true => 1 | false => 0;
-                f(true)
-            ")),
-            @r#"Ok("1")"#
-        )
-    }
-
-    #[test]
-    fn pattern2() {
-        insta::assert_snapshot!(
-            format!("{:?}", fully_eval("
-                let not = (x : Bool) : Bool => if x is true => false | false => true;
-                not(true)
-            ")),
-            @r#"Ok("false")"#
-        )
-    }
 }
