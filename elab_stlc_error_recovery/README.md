@@ -56,9 +56,9 @@ let x = y in z
 ```
 if true then 0 else false
 
-(tm)> let f: Int -> Int = |x: Int| +[#0,#0] in (#1)(Error)
-(ty)> Int
-(!!)> [38-43] mismatched types; Int and Bool
+(tm)> Error
+(ty)> Unknown
+(!!)> [0-25] mismatched branches of if expression
 ```
 
 ```
