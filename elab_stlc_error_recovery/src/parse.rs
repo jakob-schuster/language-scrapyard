@@ -1,7 +1,7 @@
 use std::{fmt::Debug, rc::Rc};
 
 use crate::{
-    parse::parser::tm,
+    parse::parser::{tm, top_tm},
     surface::{InfixOp, Param, PrefixOp, Span, Spanned, Tm, TmData, Ty, TyData},
 };
 
@@ -16,13 +16,15 @@ impl Debug for ParseError {
 }
 
 pub fn parse(string: &str) -> Result<Tm, ParseError> {
-    tm(string).map_err(|e| ParseError {
+    top_tm(string).map_err(|e| ParseError {
         pos: e.location.offset,
     })
 }
 
 peg::parser! {
     grammar parser() for str {
+
+        pub rule top_tm() -> Tm = _ tm:tm() _ { tm }
 
         pub rule tm() -> Tm = spanned(<tm_data()>)
         #[cache_left_rec]
@@ -41,7 +43,7 @@ peg::parser! {
                 TmData::FunLit { params, body: Rc::new(body) }
             } /
 
-            head:tm() _ "into" _ body:tm() { TmData::App { head: Rc::new(head), arg: Rc::new(body) } } /
+            head:tm() _ "applied to" _ body:tm() { TmData::App { head: Rc::new(head), arg: Rc::new(body) } } /
             tm1:tm() _ op:infix_op() _ tm2:tm() {
                 TmData::Infix { op, tm1: Rc::new(tm1), tm2: Rc::new(tm2) }
             } /

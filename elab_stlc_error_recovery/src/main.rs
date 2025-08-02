@@ -1,3 +1,5 @@
+use std::io::{Read, Stdin, stdin};
+
 use crate::{parse::parse, surface::elab};
 
 mod core;
@@ -7,19 +9,24 @@ mod surface;
 mod util;
 
 fn main() {
-    let tm = parse("let a(x: Int,y: Bool) = (x + 2) in (a into 10) into false").unwrap();
+    let mut code = String::new();
+    stdin().read_to_string(&mut code).unwrap();
+
+    let tm = parse(&code).unwrap();
     let (core_tm, core_ty, ctx) = elab(&tm);
 
-    println!("{}", core_tm);
-    println!("{}", core_ty);
-    println!(
-        "{}",
-        ctx.errors
-            .iter()
-            .map(|a| a.to_string())
-            .collect::<Vec<_>>()
-            .join(",")
-    )
+    println!("(tm)> {}", core_tm);
+    println!("(ty)> {}", core_ty);
+    if !ctx.errors.is_empty() {
+        println!(
+            "(!!)> {}",
+            ctx.errors
+                .iter()
+                .map(|a| a.to_string())
+                .collect::<Vec<_>>()
+                .join("\n(!!)> ")
+        )
+    }
 }
 
 mod test {
@@ -52,19 +59,22 @@ mod test {
     }
     #[test]
     fn app_pass1() {
-        insta::assert_snapshot!(parse_and_elab("let a(x: Bool) = 1 in a into false"), r"")
+        insta::assert_snapshot!(
+            parse_and_elab("let a(x: Bool) = 1 in a applied to false"),
+            r""
+        )
     }
     #[test]
     fn app_pass2() {
         insta::assert_snapshot!(
-            parse_and_elab("let a(x: Bool,y: Int) = 1 in a into false"),
+            parse_and_elab("let a(x: Bool,y: Int) = 1 in a applied to false"),
             r""
         )
     }
     #[test]
     fn app_pass3() {
         insta::assert_snapshot!(
-            parse_and_elab("let a(x: Bool,y: Int) = 1 in (a into false) into 10"),
+            parse_and_elab("let a(x: Bool,y: Int) = 1 in (a applied to false) applied to 10"),
             r""
         )
     }
