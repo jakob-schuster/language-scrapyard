@@ -2,6 +2,11 @@
 
 During elaboration, when a type error is encountered, that term gets elaborated to `Error` with the type `Unknown` and an error is added to the elaboration context. This means we catch multiple errors in one pass of the code, and instead of getting nothing from an erronious elaboration, we get a core program with errors.
 
+Run your programs from `stdin`:
+```
+cat "let x = 4 in true" | cargo run
+```
+
 ## Examples
 
 ### Passing programs
