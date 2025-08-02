@@ -62,6 +62,8 @@ if true then 0 else false
 ```
 
 ```
+if 1 then 0 else false
+
 (tm)> Error
 (ty)> Unknown
 (!!)> [3-4] mismatched types; Bool and Int
