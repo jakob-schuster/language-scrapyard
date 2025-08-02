@@ -37,7 +37,7 @@ fn main() {
         let f = (x : Int) : Type => if x is 0 => Str | _ => Int;
         let g = (x : Int) : f(x) => 'hello';
 
-        g(10)
+        g(0)
     ";
 
     println!("{}", fully_eval(code).unwrap());
@@ -99,6 +99,8 @@ fn fully_eval(code: &str) -> Result<String, Error> {
 
         Error::ElabError(e)
     })?;
+    println!("{}", ctm);
+
     let vtm = core::eval(&surface::Context::standard_library().tms, &ctm).map_err(|e| {
         let file = SimpleFile::new("<code>", code);
         let diagnostic = Diagnostic::error()

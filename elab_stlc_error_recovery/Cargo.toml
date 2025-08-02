@@ -1,0 +1,8 @@
+[package]
+name = "elab_stlc_error_recovery"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+peg = "*"
+insta = { version = "1.42.0", features = ["yaml"] }

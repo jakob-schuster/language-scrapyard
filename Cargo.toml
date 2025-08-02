@@ -11,5 +11,9 @@ members = [
   "elab_dependent",
   "elab_stlc_codespan",
   "pattern_matching",
-  "elab_dep_recs"
+  "elab_dep_recs", 
+  "lalrpop_whitespace", 
+  "peg_precedence",
+  "peg_remove_left_recursion",
+  "elab_stlc_error_recovery",
 ]
