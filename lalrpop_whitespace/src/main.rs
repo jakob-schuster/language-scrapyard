@@ -3,7 +3,7 @@ use lalrpop_util::lalrpop_mod;
 mod surface;
 mod util;
 
-lalrpop_util::lalrpop_mod!(pub parser);
+// lalrpop_util::lalrpop_mod!(pub parser);
 
 fn main() {
     let code = r"
@@ -12,7 +12,7 @@ fn main() {
         ? a
     ";
 
-    let prog = parser::ProgParser::new().parse(code);
+    // let prog = parser::ProgParser::new().parse(code);
 
-    println!("{:?}", prog);
+    // println!("{:?}", prog);
 }

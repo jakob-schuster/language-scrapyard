@@ -15,5 +15,5 @@ members = [
   "lalrpop_whitespace", 
   "peg_precedence",
   "peg_remove_left_recursion",
-  "elab_stlc_error_recovery",
+  "elab_stlc_error_recovery", "elab_algebraic_datatypes",
 ]
