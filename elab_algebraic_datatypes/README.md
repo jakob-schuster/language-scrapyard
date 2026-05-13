@@ -2,6 +2,8 @@
 
 Language with structs and (discriminated) enums. Also supports error recovery.
 
+## Example
+
 ```
 enum Animal { Cat, Dog }
 enum Noise { Meow, Woof }

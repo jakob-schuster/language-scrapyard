@@ -1,12 +1,12 @@
-use std::{collections::HashMap, rc::Rc};
+use std::{collections::HashMap, fmt::Display, rc::Rc};
 
-use crate::prim::Prim;
+use crate::{prim::Prim, surface};
 
 // De Bruijn index that represents a variable occurrence by the number of
 // binders between the occurrence and the binder it refers to.
 pub type Index = usize;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum Tm {
     Var {
         i: usize,
@@ -80,8 +80,12 @@ pub enum Tm {
     },
 }
 
-#[derive(Clone)]
-enum Val {
+#[derive(Clone, PartialEq)]
+pub enum Val {
+    Neutral {
+        neutral: Neutral,
+    },
+
     UnivTy,
 
     BoolTy,
@@ -111,10 +115,6 @@ enum Val {
     Struct {
         fields: HashMap<String, Val>,
     },
-    StructProj {
-        head: Rc<Tm>,
-        field: String,
-    },
 
     FunTy {
         args: Vec<Val>,
@@ -128,13 +128,174 @@ enum Val {
     Error,
 }
 
+impl Val {
+    pub fn equiv_ty(&self, other: &Val) -> bool {
+        match (self, other) {
+            (Val::UnivTy, Val::UnivTy) | (Val::BoolTy, Val::BoolTy) | (Val::NumTy, Val::NumTy) => {
+                true
+            }
+
+            (
+                Val::EnumTy {
+                    variants: self_variants,
+                },
+                Val::EnumTy {
+                    variants: other_variants,
+                },
+            ) => {
+                if self_variants.len() != other_variants.len() {
+                    false
+                } else {
+                    for (variant, fields) in self_variants {
+                        match other_variants.get(variant) {
+                            Some(other_fields) => {
+                                if fields.len() != other_fields.len() {
+                                    return false;
+                                }
+
+                                for (name, field) in fields {
+                                    match other_fields.get(name) {
+                                        Some(other_field) => {
+                                            if !field.equiv_ty(other_field) {
+                                                return false;
+                                            }
+                                        }
+                                        None => return false,
+                                    }
+                                }
+                            }
+                            None => return false,
+                        }
+                    }
+
+                    true
+                }
+            }
+
+            (
+                Val::StructTy {
+                    fields: self_fields,
+                },
+                Val::StructTy {
+                    fields: other_fields,
+                },
+            ) => {
+                if self_fields.len() != other_fields.len() {
+                    false
+                } else {
+                    for (name, field) in self_fields {
+                        match other_fields.get(name) {
+                            Some(other_field) => {
+                                if !field.equiv_ty(other_field) {
+                                    return false;
+                                }
+                            }
+                            None => return false,
+                        }
+                    }
+
+                    true
+                }
+            }
+
+            _ => false,
+        }
+    }
+}
+
+impl Display for Val {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Val::Neutral { neutral } => todo!(),
+            Val::UnivTy => "Type".fmt(f),
+            Val::BoolTy => "Bool".fmt(f),
+            Val::Bool { b } => b.fmt(f),
+            Val::NumTy => "Num".fmt(f),
+            Val::Num { n } => n.fmt(f),
+            Val::EnumTy { variants } => format!(
+                "Enum {{{}}}",
+                variants
+                    .iter()
+                    .map(|(name, fields)| format!(
+                        "{} {{{}}}",
+                        name,
+                        fields
+                            .iter()
+                            .map(|(name, ty)| format!("{}: {}", name, ty))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            )
+            .fmt(f),
+            Val::Enum { variant, fields } => format!(
+                "enum {}.{{{}}}",
+                variant,
+                fields
+                    .iter()
+                    .map(|(name, field)| format!("{}: {}", name, field))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+            .fmt(f),
+            Val::StructTy { fields } => format!(
+                "Struct {{{}}}",
+                fields
+                    .iter()
+                    .map(|(name, field)| format!("{}: {}", name, field))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+            .fmt(f),
+            Val::Struct { fields } => format!(
+                "struct {{{}}}",
+                fields
+                    .iter()
+                    .map(|(name, field)| format!("{}: {}", name, field))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+            .fmt(f),
+            Val::FunTy { args, body } => format!(
+                "Fn({}): {}",
+                args.iter()
+                    .map(|arg| arg.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                body
+            )
+            .fmt(f),
+            Val::Fun { body } => format!("fn(?): ?").fmt(f),
+            Val::ErrorTy => "Error".fmt(f),
+            Val::Error => "error".fmt(f),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub enum Neutral {
+    Var { i: usize },
+}
+
 // an environment of values
 #[derive(Clone)]
-struct Env {
+pub struct Env {
     vals: Vec<Val>,
 }
 
 impl Env {
+    pub fn from_ctx(ctx: &surface::Context) -> Env {
+        let mut tms = ctx.tys.values().collect::<Vec<_>>();
+        tms.sort_by_key(|(index, _, _)| index);
+        let sorted_tms = tms
+            .into_iter()
+            .map(|(_, _, tm)| tm.clone())
+            .collect::<Vec<_>>();
+
+        Env { vals: sorted_tms }
+    }
+
     // the empty environment
     fn empty() -> Env {
         Env { vals: Vec::new() }
@@ -154,7 +315,7 @@ impl Env {
 }
 
 impl Tm {
-    fn eval(&self, env: &Env) -> Val {
+    pub fn eval(&self, env: &Env) -> Val {
         match self {
             Tm::Var { i } => env.get(i),
 
@@ -237,15 +398,9 @@ impl Tm {
                 }
                 _ => panic!("expected bool?!"),
             },
-            Tm::PrimApp { prim, args } => match prim {
-                Prim::BoolEq => todo!(),
-
-                Prim::IntEq => todo!(),
-                Prim::IntAdd => todo!(),
-                Prim::IntSub => todo!(),
-                Prim::IntMul => todo!(),
-                Prim::IntNeg => todo!(),
-            },
+            Tm::PrimApp { prim, args } => {
+                prim.apply(&args.iter().map(|tm| tm.eval(env)).collect::<Vec<_>>())
+            }
         }
     }
 }
