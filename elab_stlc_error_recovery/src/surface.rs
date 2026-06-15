@@ -145,7 +145,7 @@ pub struct Context {
     // a stack of bindings currently in scope
     pub tys: HashMap<String, (core::Index, core::Ty)>,
 
-    // erorr messages recorded during elaboration
+    // error messages recorded during elaboration
     pub errors: Vec<Error>,
 }
 
@@ -280,7 +280,11 @@ fn infer_tm(ctx: &Context, tm: &Tm) -> (core::Tm, core::Ty, Context) {
             Some((index, ty)) => (core::Tm::Var { index }, ty, ctx.clone()),
             None => match name.as_str() {
                 "true" => (core::Tm::BoolLit { b: true }, core::Ty::BoolTy, ctx.clone()),
-                "false" => (core::Tm::BoolLit { b: true }, core::Ty::BoolTy, ctx.clone()),
+                "false" => (
+                    core::Tm::BoolLit { b: false },
+                    core::Ty::BoolTy,
+                    ctx.clone(),
+                ),
                 _ => (
                     core::Tm::ReportedError,
                     core::Ty::UnknownTy,
